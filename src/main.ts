@@ -4,14 +4,14 @@ import { defaultCategories, onThemeChange } from './defaults';
 import { AuthError } from './drivers/http';
 import { html, type SafeHtml } from './html';
 import { lang, LANGS, setLang, t, type Lang } from './i18n';
-import { googleLogo, icon, microsoftLogo, type IconName } from './icons';
+import { googleLogo, icon, logoMark, microsoftLogo, type IconName } from './icons';
 import { mountAdd } from './pages/add';
 import { mountCategories } from './pages/categories';
 import { mountDashboard } from './pages/dashboard';
 import { initials, openSettings } from './pages/settings';
 import { ensureRatesFor } from './rates';
 import { store } from './store';
-import { $ } from './ui';
+import { $, openExpenseActions } from './ui';
 
 const app = $('#app');
 /** Set while a silent sign-in redirect is in flight, so a failure can't loop. */
@@ -34,7 +34,7 @@ function renderLogin(error: string | null): void {
   app.innerHTML = html`
     <main class="login">
       <div class="login-card">
-        <div class="logo">${icon('wallet')}</div>
+        <div class="logo">${logoMark}</div>
         <h1>Spendly</h1>
         <p class="tagline">${t('tagline')}</p>
         ${error
@@ -80,7 +80,7 @@ function renderShell(): void {
   app.innerHTML = html`
     <header class="topbar">
       <div class="topbar-inner">
-        <a class="brand" href="#/add">${icon('wallet')}<span>Spendly</span></a>
+        <a class="brand" href="#/add">${logoMark}<span>Spendly</span></a>
         <nav class="tabs" aria-label="Spendly">
           ${TABS.map(([route, ic, label]) => html`<a href="#/${route}" data-route="${route}">${icon(ic)}<span>${label()}</span></a>`)}
         </nav>
@@ -204,6 +204,12 @@ async function ensureToken(redirectError: string | null): Promise<boolean> {
   }
   return true;
 }
+
+// The ⋯ button on any expense row, in any list.
+document.addEventListener('click', (e) => {
+  const id = (e.target as Element).closest<HTMLElement>('[data-expense-actions]')?.dataset.expenseActions;
+  if (id) openExpenseActions(id);
+});
 
 // Clicking anywhere on a date field opens the calendar (not only the tiny icon on desktop).
 document.addEventListener('click', (e) => {

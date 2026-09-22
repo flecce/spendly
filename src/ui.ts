@@ -74,15 +74,57 @@ export function categoryBadge(name: string): SafeHtml {
 export const categoryLabel = (name: string): string => name || t('uncategorized');
 
 /** One expense in a list; tapping it opens the editor. */
-export function expenseRow(e: Expense, opts: { showDate: boolean }): SafeHtml {
-  const title = e.note || categoryLabel(e.category);
+const expenseTitle = (e: Expense): string => e.note || categoryLabel(e.category);
+
+function expenseSummary(e: Expense, opts: { showDate: boolean }): SafeHtml {
   const meta = [e.note ? categoryLabel(e.category) : '', opts.showDate ? dayLabel(e.date) : ''].filter(Boolean).join(' · ');
   const converted = e.currency === mainCurrency ? null : toMain(e.amount, e.currency, e.date);
-  return html`<li>
-    <a class="row" href="#/edit/${encodeURIComponent(e.id)}">
-      ${categoryBadge(e.category)}
-      <span class="row-main"><span class="row-title">${title}</span>${meta ? html`<span class="row-meta">${meta}</span>` : ''}</span>
-      <span class="row-amount">${money(e.amount, e.currency)}${converted !== null ? html`<small>≈ ${money(converted)}</small>` : ''}</span>
-    </a>
+  return html`${categoryBadge(e.category)}
+    <span class="row-main"><span class="row-title">${expenseTitle(e)}</span>${meta ? html`<span class="row-meta">${meta}</span>` : ''}</span>
+    <span class="row-amount">${money(e.amount, e.currency)}${converted !== null ? html`<small>≈ ${money(converted)}</small>` : ''}</span>`;
+}
+
+/** One expense in a list: tap it to edit, or use ⋯ for edit / delete. */
+export function expenseRow(e: Expense, opts: { showDate: boolean }): SafeHtml {
+  return html`<li class="expense">
+    <a class="row" href="#/edit/${encodeURIComponent(e.id)}">${expenseSummary(e, opts)}</a>
+    <button type="button" class="row-more" data-expense-actions="${e.id}" aria-label="${t('actions')}: ${expenseTitle(e)}">${icon('more')}</button>
   </li>`;
+}
+
+/** Action sheet for an expense. Deleting takes a second tap on the same button, no extra dialog. */
+export function openExpenseActions(id: string): void {
+  const e = store.expenses.find((x) => x.id === id);
+  if (!e) return;
+  let armed = false;
+  const dialog = openSheet(html`
+    <div class="sheet-body expense-actions">
+      <div class="row static">${expenseSummary(e, { showDate: true })}</div>
+      <div class="sheet-actions">
+        <button type="button" class="btn block" data-action="edit">${icon('pencil')}${t('edit')}</button>
+        <button type="button" class="btn block danger-text" data-action="delete">${icon('trash')}<span>${t('delete')}</span></button>
+        <button type="button" class="btn ghost block" data-action="close">${t('cancel')}</button>
+      </div>
+    </div>
+  `);
+  dialog.addEventListener('click', (ev) => {
+    const button = (ev.target as Element).closest<HTMLButtonElement>('[data-action]');
+    const action = button?.dataset.action;
+    if (action === 'close') dialog.close();
+    if (action === 'edit') {
+      dialog.close();
+      location.hash = `#/edit/${encodeURIComponent(id)}`;
+    }
+    if (action === 'delete' && button) {
+      if (!armed) {
+        armed = true;
+        button.classList.replace('danger-text', 'danger');
+        $('span', button).textContent = t('confirmDelete');
+        return;
+      }
+      store.deleteExpense(id);
+      dialog.close();
+      toast(t('deleted'));
+    }
+  });
 }

@@ -386,13 +386,9 @@ textarea {
   text-decoration: none;
 }
 
-.brand .icon {
+.brand .logo-mark {
   width: 30px;
   height: 30px;
-  padding: 6px;
-  border-radius: 9px;
-  background: var(--accent);
-  color: #fff;
 }
 
 /* Phones: tab bar at the bottom, within thumb reach. */
@@ -737,13 +733,11 @@ dialog.sheet::backdrop {
   text-align: center;
 }
 
-.logo .icon {
-  width: 68px;
-  height: 68px;
-  padding: 15px;
-  border-radius: 22px;
-  background: var(--accent);
-  color: #fff;
+.logo .logo-mark {
+  display: block;
+  width: 72px;
+  height: 72px;
+  border-radius: 16px;
   box-shadow: 0 10px 30px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
@@ -1054,6 +1048,60 @@ dialog.sheet::backdrop {
 
 .row:hover {
   background: var(--surface-2);
+}
+
+.list > li.expense {
+  display: flex;
+  align-items: center;
+}
+
+.expense .row {
+  flex: 1;
+  min-width: 0;
+  padding-right: 4px;
+}
+
+.row-more {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 44px;
+  margin-right: 6px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.row-more:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.row.static {
+  padding: 4px 0 8px;
+  cursor: default;
+}
+
+.row.static:hover {
+  background: none;
+}
+
+.sheet-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sheet-actions .btn {
+  min-height: 52px;
+  font-size: 16px;
+}
+
+.sheet-actions .btn.ghost {
+  justify-content: center;
 }
 
 .avatar {
