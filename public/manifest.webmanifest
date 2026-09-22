@@ -1,0 +1,14 @@
+{
+  "name": "Spendly",
+  "short_name": "Spendly",
+  "description": "Track your expenses in seconds, saved to your own Google Sheet or Excel file.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f4f1",
+  "theme_color": "#2a78d6",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
