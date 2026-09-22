@@ -4,7 +4,7 @@ import { html, type SafeHtml } from './html';
 import { t } from './i18n';
 import { icon } from './icons';
 import { toMain } from './rates';
-import type { Expense } from './schema';
+import { allCategories, type Expense } from './schema';
 import { store } from './store';
 
 export const $ = <T extends Element = HTMLElement>(sel: string, root: ParentNode = document): T => root.querySelector<T>(sel)!;
@@ -77,11 +77,16 @@ export const categoryLabel = (name: string): string => name || t('uncategorized'
 const expenseTitle = (e: Expense): string => e.note || categoryLabel(e.category);
 
 function expenseSummary(e: Expense, opts: { showDate: boolean }): SafeHtml {
-  const meta = [e.note ? categoryLabel(e.category) : '', opts.showDate ? dayLabel(e.date) : ''].filter(Boolean).join(' · ');
+  const categories = e.tags.length ? allCategories(e).join(' + ') : categoryLabel(e.category);
+  const meta = [e.note ? categories : '', opts.showDate ? dayLabel(e.date) : ''].filter(Boolean).join(' · ');
   const converted = e.currency === mainCurrency ? null : toMain(e.amount, e.currency, e.date);
+  const income = e.type === 'income';
   return html`${categoryBadge(e.category)}
-    <span class="row-main"><span class="row-title">${expenseTitle(e)}</span>${meta ? html`<span class="row-meta">${meta}</span>` : ''}</span>
-    <span class="row-amount">${money(e.amount, e.currency)}${converted !== null ? html`<small>≈ ${money(converted)}</small>` : ''}</span>`;
+    <span class="row-main">
+      <span class="row-title">${expenseTitle(e)}${e.group ? html`<span class="split-badge" title="${t('splitPartOf')}">${icon('split')}</span>` : ''}</span>
+      ${meta ? html`<span class="row-meta">${meta}</span>` : ''}
+    </span>
+    <span class="row-amount ${income ? 'income' : ''}">${income ? '+ ' : ''}${money(e.amount, e.currency)}${converted !== null ? html`<small>≈ ${money(converted)}</small>` : ''}</span>`;
 }
 
 /** One expense in a list: tap it to edit, or use ⋯ for edit / delete. */
@@ -96,13 +101,19 @@ export function expenseRow(e: Expense, opts: { showDate: boolean }): SafeHtml {
 export function openExpenseActions(id: string): void {
   const e = store.expenses.find((x) => x.id === id);
   if (!e) return;
+  const parts = store.splitParts(e);
   let armed = false;
   const dialog = openSheet(html`
     <div class="sheet-body expense-actions">
       <div class="row static">${expenseSummary(e, { showDate: true })}</div>
       <div class="sheet-actions">
         <button type="button" class="btn block" data-action="edit">${icon('pencil')}${t('edit')}</button>
-        <button type="button" class="btn block danger-text" data-action="delete">${icon('trash')}<span>${t('delete')}</span></button>
+        <button type="button" class="btn block danger-text" data-action="delete">
+          ${icon('trash')}<span>${parts.length > 1 ? t('deleteAllParts', { n: parts.length }) : t('delete')}</span>
+        </button>
+        ${parts.length > 1
+          ? html`<button type="button" class="btn ghost block danger-text" data-action="delete-one"><span>${t('deleteThisPart')}</span></button>`
+          : ''}
         <button type="button" class="btn ghost block" data-action="close">${t('cancel')}</button>
       </div>
     </div>
@@ -115,14 +126,14 @@ export function openExpenseActions(id: string): void {
       dialog.close();
       location.hash = `#/edit/${encodeURIComponent(id)}`;
     }
-    if (action === 'delete' && button) {
+    if ((action === 'delete' || action === 'delete-one') && button) {
       if (!armed) {
         armed = true;
         button.classList.replace('danger-text', 'danger');
         $('span', button).textContent = t('confirmDelete');
         return;
       }
-      store.deleteExpense(id);
+      store.deleteExpenses(action === 'delete' ? parts.map((p) => p.id) : [id]);
       dialog.close();
       toast(t('deleted'));
     }

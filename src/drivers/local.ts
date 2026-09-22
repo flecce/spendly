@@ -6,13 +6,18 @@ const KEY = 'spendly.local.db';
 /** Demo / offline-only backend: the "spreadsheet" lives in localStorage. */
 export class LocalDriver implements Driver {
   readonly fileUrl = null;
-  private db: { expenses: Row[]; categories: Row[]; settings: Row[] } = { expenses: [], categories: [], settings: [] };
+  private db: { expenses: Row[]; categories: Row[]; budgets: Row[]; settings: Row[] } = {
+    expenses: [],
+    categories: [],
+    budgets: [],
+    settings: [],
+  };
 
   async connect(seedCategories: Row[]): Promise<void> {
     const saved = localStorage.getItem(KEY);
-    if (saved) this.db = { settings: [], ...JSON.parse(saved) };
+    if (saved) this.db = { budgets: [], settings: [], ...JSON.parse(saved) };
     else {
-      this.db = { expenses: [], categories: seedCategories, settings: [] };
+      this.db = { expenses: [], categories: seedCategories, budgets: [], settings: [] };
       this.save();
     }
   }
@@ -48,14 +53,27 @@ export class LocalDriver implements Driver {
     this.save();
   }
 
+  async writeBudgets(rows: Row[]): Promise<void> {
+    this.db.budgets = rows;
+    this.save();
+  }
+
   async writeSettings(rows: Row[]): Promise<void> {
     this.db.settings = rows;
     this.save();
   }
 
   async writeExpenseCategories(values: string[]): Promise<void> {
+    this.writeColumn(COL.category, values);
+  }
+
+  async writeExpenseTags(values: string[]): Promise<void> {
+    this.writeColumn(COL.tags, values);
+  }
+
+  private writeColumn(col: number, values: string[]): void {
     values.forEach((v, i) => {
-      if (this.db.expenses[i]) this.db.expenses[i][COL.category] = v;
+      if (this.db.expenses[i]) this.db.expenses[i][col] = v;
     });
     this.save();
   }

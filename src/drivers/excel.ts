@@ -1,13 +1,24 @@
 import { isoToSerial } from '../format';
-import { CATEGORY_HEADER, COL, EXPENSE_HEADER, rowIds, SETTINGS_HEADER, type Cell, type Row, type SheetName } from '../schema';
+import {
+  BUDGET_HEADER,
+  CATEGORY_HEADER,
+  COL,
+  EXPENSE_HEADER,
+  rowIds,
+  SETTINGS_HEADER,
+  type Cell,
+  type Row,
+  type SheetName,
+} from '../schema';
 import { api, HttpError, isNotFound, type TokenGetter } from './http';
 import type { Driver } from './types';
 import { buildXlsx, Style } from './xlsx';
 
 const DRIVE = 'https://graph.microsoft.com/v1.0/me/drive';
 const FILE = 'Spendly.xlsx';
-const EXPENSE_FORMATS = ['yyyy-mm-dd', '#,##0.00', '@', '@', '@', '@'];
+const EXPENSE_FORMATS = ['yyyy-mm-dd', '#,##0.00', '@', '@', '@', '@', '@', '@', '@'];
 const CATEGORY_FORMATS = ['@', '@', '@', '@'];
+const BUDGET_FORMATS = ['@', '@', '#,##0.00', '@'];
 const SETTINGS_FORMATS = ['@', 'General'];
 
 interface DriveItem {
@@ -39,6 +50,16 @@ export class ExcelDriver implements Driver {
     this.book = `${DRIVE}/items/${item.id}/workbook`;
     this.fileUrl = item.webUrl;
     localStorage.setItem(this.cacheKey, item.id);
+    await this.repairHeader();
+  }
+
+  /** Files written by an older version have fewer columns: bring the header row up to date. */
+  private async repairHeader(): Promise<void> {
+    const res = await this.call<{ values: unknown[][] }>(`${this.ws('Expenses')}/range(address='A1:I1')?$select=values`);
+    const current = (res.values?.[0] ?? []).map(String);
+    if (EXPENSE_HEADER.some((h, i) => current[i] !== h)) {
+      await this.write('Expenses', 'A1:I1', [EXPENSE_HEADER], EXPENSE_FORMATS.map(() => '@'));
+    }
   }
 
   private async cachedItem(): Promise<DriveItem | null> {
@@ -71,6 +92,9 @@ export class ExcelDriver implements Driver {
           { width: 22, style: Style.Text },
           { width: 40, style: Style.Text },
           { width: 14, style: Style.Text },
+          { width: 9, style: Style.Text },
+          { width: 14, style: Style.Text },
+          { width: 24, style: Style.Text },
         ],
       },
       {
@@ -81,6 +105,16 @@ export class ExcelDriver implements Driver {
           { width: 8, style: Style.Text },
           { width: 10, style: Style.Text },
           { width: 80, style: Style.Text },
+        ],
+      },
+      {
+        name: 'Budgets',
+        rows: [BUDGET_HEADER],
+        columns: [
+          { width: 10, style: Style.Text },
+          { width: 24, style: Style.Text },
+          { width: 12, style: Style.Amount },
+          { width: 10, style: Style.Text },
         ],
       },
       {
@@ -121,23 +155,30 @@ export class ExcelDriver implements Driver {
     return [...Array.from({ length: firstRow - 1 }, () => []), ...rows].slice(1);
   }
 
-  /** Settings rows; files created before the Settings sheet existed simply have none. */
-  private async settingsRows(): Promise<unknown[][] | null> {
+  /** Rows of a sheet that files created by an older version may not have yet. */
+  private async optionalRows(sheet: SheetName): Promise<unknown[][] | null> {
     try {
-      return await this.dataRows('Settings');
+      return await this.dataRows(sheet);
     } catch (e) {
       if (isNotFound(e)) return null;
       throw e;
     }
   }
 
+  /** Adds a sheet an older file lacks, with its header row. */
+  private async addSheet(sheet: SheetName, header: Row): Promise<void> {
+    await this.call(`${this.book}/worksheets/add`, { method: 'POST', body: JSON.stringify({ name: sheet }) });
+    await this.write(sheet, `A1:${String.fromCharCode(64 + header.length)}1`, [header], header.map(() => '@'));
+  }
+
   async read() {
-    const [expenses, categories, settings] = await Promise.all([
+    const [expenses, categories, budgets, settings] = await Promise.all([
       this.dataRows('Expenses'),
       this.dataRows('Categories'),
-      this.settingsRows(),
+      this.optionalRows('Budgets'),
+      this.optionalRows('Settings'),
     ]);
-    return { expenses, categories, settings: settings ?? [] };
+    return { expenses, categories, budgets: budgets ?? [], settings: settings ?? [] };
   }
 
   private write(sheet: SheetName, address: string, rows: Cell[][], formats: string[]) {
@@ -150,7 +191,7 @@ export class ExcelDriver implements Driver {
   private writeExpense(r: number, row: Row) {
     // Dates go in as serial numbers so Excel stores real dates regardless of locale.
     const cells = row.map((v, i) => (i === COL.date ? isoToSerial(String(v)) : i === COL.amount ? v : String(v)));
-    return this.write('Expenses', `A${r}:F${r}`, [cells], EXPENSE_FORMATS);
+    return this.write('Expenses', `A${r}:I${r}`, [cells], EXPENSE_FORMATS);
   }
 
   async appendExpense(row: Row): Promise<void> {
@@ -191,18 +232,29 @@ export class ExcelDriver implements Driver {
     await this.replaceRows('Categories', 'D', before, rows.map((r) => r.map(String)), CATEGORY_FORMATS);
   }
 
-  async writeSettings(rows: Row[]): Promise<void> {
-    let before = await this.settingsRows();
+  async writeBudgets(rows: Row[]): Promise<void> {
+    let before = await this.optionalRows('Budgets');
     if (!before) {
-      await this.call(`${this.book}/worksheets/add`, { method: 'POST', body: JSON.stringify({ name: 'Settings' }) });
-      await this.write('Settings', 'A1:B1', [SETTINGS_HEADER], ['@', '@']);
+      await this.addSheet('Budgets', BUDGET_HEADER);
+      before = [];
+    }
+    await this.replaceRows('Budgets', 'D', before, rows, BUDGET_FORMATS);
+  }
+
+  async writeSettings(rows: Row[]): Promise<void> {
+    let before = await this.optionalRows('Settings');
+    if (!before) {
+      await this.addSheet('Settings', SETTINGS_HEADER);
       before = [];
     }
     await this.replaceRows('Settings', 'B', before, rows, SETTINGS_FORMATS);
   }
 
   async writeExpenseCategories(values: string[]): Promise<void> {
-    if (!values.length) return;
-    await this.write('Expenses', `D2:D${values.length + 1}`, values.map((v) => [v]), ['@']);
+    if (values.length) await this.write('Expenses', `D2:D${values.length + 1}`, values.map((v) => [v]), ['@']);
+  }
+
+  async writeExpenseTags(values: string[]): Promise<void> {
+    if (values.length) await this.write('Expenses', `I2:I${values.length + 1}`, values.map((v) => [v]), ['@']);
   }
 }

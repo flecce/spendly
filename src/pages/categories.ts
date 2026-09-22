@@ -1,4 +1,5 @@
 import { EMOJIS, PALETTE, themedColor } from '../defaults';
+import { amountInputValue, mainCurrency, money, parseAmount, today } from '../format';
 import { html } from '../html';
 import { countLabel, t } from '../i18n';
 import { icon } from '../icons';
@@ -18,6 +19,7 @@ function firstGrapheme(s: string): string {
 
 function openEditor(name: string | null): void {
   const cat = name === null ? undefined : store.category(name);
+  const budget = cat ? store.budgetFor(today().slice(0, 7), cat.name) : null;
   const used = new Set(store.categories.map((c) => c.color.toLowerCase()));
   const color = cat?.color ?? PALETTE.find(([light]) => !used.has(light))?.[0] ?? PALETTE[0][0];
 
@@ -52,6 +54,15 @@ function openEditor(name: string | null): void {
           )}
         </div>
       </fieldset>
+      <label class="field">
+        <span class="label">${t('categoryBudget')}</span>
+        <span class="amount-input">
+          <span class="currency-code">${mainCurrency}</span>
+          <input name="budget" type="text" inputmode="decimal" placeholder="0" autocomplete="off"
+            value="${budget ? amountInputValue(budget.amount) : ''}" />
+        </span>
+        <span class="hint">${t('categoryBudgetHint')}</span>
+      </label>
       <label class="field">
         <span class="label">${t('keywords')}</span>
         <textarea name="keywords" rows="3" placeholder="${t('keywordsHint')}">${cat?.keywords.join(', ') ?? ''}</textarea>
@@ -107,6 +118,8 @@ function openEditor(name: string | null): void {
       color: String(data.get('color') ?? color),
       keywords: splitKeywords(String(data.get('keywords') ?? '')),
     });
+    const wanted = Math.max(0, parseAmount(String(data.get('budget') ?? '')) ?? 0);
+    if (Math.abs(wanted - (budget?.amount ?? 0)) > 0.009) store.setBudget(wanted, newName);
     toast(t('saved'));
     dialog.close();
   });
@@ -116,6 +129,7 @@ export function mountCategories(view: HTMLElement): () => void {
   function render(): void {
     const counts = new Map<string, number>();
     for (const e of store.expenses) counts.set(e.category, (counts.get(e.category) ?? 0) + 1);
+    const budgets = store.categoryBudgets(today().slice(0, 7));
 
     view.innerHTML = html`
       <div class="page-head">
@@ -134,7 +148,10 @@ export function mountCategories(view: HTMLElement): () => void {
                     <span class="row-title">${c.name}</span>
                     <span class="row-meta">${preview || t('noKeywords')}</span>
                   </span>
-                  <span class="row-side">${countLabel(counts.get(c.name) ?? 0)}</span>
+                  <span class="row-side">
+                    ${budgets.get(c.name) ? html`<span class="budget-tag">${money(budgets.get(c.name)!.amount, budgets.get(c.name)!.currency)}</span>` : ''}
+                    ${countLabel(counts.get(c.name) ?? 0)}
+                  </span>
                   ${icon('chevron', 'muted')}
                 </button>
               </li>`;

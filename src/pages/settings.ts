@@ -1,12 +1,13 @@
 import { logout, type Account, type Provider } from '../auth/session';
 import { openBudgetEditor } from '../budget';
+import { seedNameFor } from '../defaults';
 import { CURRENCIES, currencyName, mainCurrency, money, setMainCurrency } from '../format';
 import { html } from '../html';
 import { lang, LANGS, setLang, t, type Lang } from '../i18n';
 import { icon } from '../icons';
 import { ensureRatesFor } from '../rates';
 import { store } from '../store';
-import { $, confirmDialog, openSheet } from '../ui';
+import { $, confirmDialog, openSheet, toast } from '../ui';
 
 const PROVIDER_NAME: Record<Provider, string> = { google: 'Google', microsoft: 'Microsoft', local: '' };
 const APP_NAME: Record<Provider, string> = { google: 'Google Sheets', microsoft: 'Excel', local: '' };
@@ -15,6 +16,18 @@ export const initials = (a: Account): string =>
   (a.name || a.email || '?').split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?';
 
 /** Settings sheet: account, language, currency, sync, sign out. `onPrefsChange` re-renders the app. */
+/** The standard categories sit in the file in one language: offer to move them to the new one. */
+async function offerCategoryTranslation(lang: Lang): Promise<void> {
+  const taken = new Set(store.categories.map((c) => c.name));
+  const todo = store.categories
+    .map((category) => ({ category, name: seedNameFor(category.name, lang) }))
+    .filter((x) => x.name && x.name !== x.category.name && !taken.has(x.name));
+  if (!todo.length) return;
+  if (!(await confirmDialog(t('translateCategoriesAsk', { lang: LANGS[lang] }), t('translate')))) return;
+  for (const { category, name } of todo) store.saveCategory(category.name, { ...category, name: name! });
+  toast(t('categoriesTranslated'));
+}
+
 export function openSettings(account: Account, onPrefsChange: () => void): void {
   const local = account.provider === 'local';
   const pending = store.queue.length;
@@ -79,8 +92,10 @@ export function openSettings(account: Account, onPrefsChange: () => void): void 
     openSettings(account, onPrefsChange);
   };
   $<HTMLSelectElement>('[name=lang]', dialog).addEventListener('change', (e) => {
-    setLang((e.target as HTMLSelectElement).value as Lang);
+    const next = (e.target as HTMLSelectElement).value as Lang;
+    setLang(next);
     reopen();
+    void offerCategoryTranslation(next);
   });
   $<HTMLSelectElement>('[name=currency]', dialog).addEventListener('change', (e) => {
     setMainCurrency((e.target as HTMLSelectElement).value);

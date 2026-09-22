@@ -3,16 +3,21 @@ import { readJson } from './auth/util';
 import { learn, type Model } from './categorize';
 import { AuthError, HttpError } from './drivers/http';
 import type { Driver } from './drivers/types';
-import { isCurrency, mainCurrency } from './format';
+import { isCurrency, mainCurrency, today } from './format';
 import {
+  budgetAt,
+  budgetToRow,
   categoryToRow,
   COL,
   expenseToRow,
+  rowsToBudgets,
   rowsToCategories,
   rowsToExpenses,
   rowsToSettings,
   settingsToRows,
+  splitKeywords,
   type Budget,
+  type BudgetEntry,
   type Category,
   type Expense,
   type Row,
@@ -30,6 +35,7 @@ type Op =
   | { t: 'upsert'; id: string; row: Row }
   | { t: 'delete'; id: string }
   | { t: 'categories'; rows: Row[] }
+  | { t: 'budgets'; rows: Row[] }
   | { t: 'settings'; rows: Row[] }
   | { t: 'rename'; from: string; to: string };
 
@@ -39,15 +45,25 @@ type Topic = 'data' | 'sync';
 interface Cache {
   expenses: Expense[];
   categories: Category[];
+  budgets?: BudgetEntry[];
   settings?: Settings;
   queue: Op[];
 }
 
 const isNetworkError = (e: unknown) => e instanceof TypeError || !navigator.onLine;
 
+/** An older version kept a single budget in Settings: treat it as always having been in force. */
+function withLegacyBudget(entries: BudgetEntry[], settings: Settings): BudgetEntry[] {
+  const amount = Number(settings.monthlyBudget);
+  if (!(amount > 0) || entries.some((b) => b.category === '')) return entries;
+  const currency = String(settings.budgetCurrency ?? '');
+  return [{ month: '2000-01', category: '', amount, currency: isCurrency(currency) ? currency : mainCurrency }, ...entries];
+}
+
 class Store {
   expenses: Expense[] = [];
   categories: Category[] = [];
+  budgets: BudgetEntry[] = [];
   settings: Settings = {};
   queue: Op[] = [];
   sync: SyncState = 'idle';
@@ -91,6 +107,7 @@ class Store {
     if (cache) {
       this.expenses = cache.expenses;
       this.categories = cache.categories;
+      this.budgets = cache.budgets ?? [];
       this.settings = cache.settings ?? {};
       this.queue = cache.queue ?? [];
       this.ready = true;
@@ -98,7 +115,13 @@ class Store {
   }
 
   private persist(): void {
-    const cache: Cache = { expenses: this.expenses, categories: this.categories, settings: this.settings, queue: this.queue };
+    const cache: Cache = {
+      expenses: this.expenses,
+      categories: this.categories,
+      budgets: this.budgets,
+      settings: this.settings,
+      queue: this.queue,
+    };
     try {
       localStorage.setItem(this.key, JSON.stringify(cache));
     } catch (e) {
@@ -153,6 +176,7 @@ class Store {
         this.expenses = rowsToExpenses(data.expenses);
         this.categories = rowsToCategories(data.categories);
         this.settings = rowsToSettings(data.settings);
+        this.budgets = withLegacyBudget(rowsToBudgets(data.budgets), this.settings);
         this.ready = true;
         this.changed();
       }
@@ -208,15 +232,23 @@ class Store {
         return d.deleteExpense(op.id);
       case 'categories':
         return d.writeCategories(op.rows);
+      case 'budgets':
+        return d.writeBudgets(op.rows);
       case 'settings':
         return d.writeSettings(op.rows);
       case 'rename': {
         const { expenses } = await d.read();
-        const column = expenses.map((r) => {
+        const categories = expenses.map((r) => {
           const cat = String(r[COL.category] ?? '').trim();
           return cat === op.from ? op.to : cat;
         });
-        if (column.includes(op.to)) await d.writeExpenseCategories(column);
+        const tags = expenses.map((r) =>
+          splitKeywords(String(r[COL.tags] ?? ''))
+            .map((tag) => (tag === op.from ? op.to : tag))
+            .join(', '),
+        );
+        if (categories.includes(op.to)) await d.writeExpenseCategories(categories);
+        if (tags.some((t) => t.includes(op.to))) await d.writeExpenseTags(tags);
       }
     }
   }
@@ -239,8 +271,15 @@ class Store {
   // ---- Mutations ----
 
   addExpense(e: Expense): void {
-    this.expenses.push(e);
-    this.enqueue({ t: 'add', row: expenseToRow(e) });
+    this.addExpenses([e]);
+  }
+
+  /** Adds several rows at once: the parts of an expense split across categories. */
+  addExpenses(list: Expense[]): void {
+    this.expenses.push(...list);
+    for (const e of list) this.queue.push({ t: 'add', row: expenseToRow(e) });
+    this.changed();
+    void this.flush();
   }
 
   updateExpense(e: Expense): void {
@@ -251,8 +290,20 @@ class Store {
   }
 
   deleteExpense(id: string): void {
-    this.expenses = this.expenses.filter((x) => x.id !== id);
-    this.enqueue({ t: 'delete', id });
+    this.deleteExpenses([id]);
+  }
+
+  deleteExpenses(ids: string[]): void {
+    const gone = new Set(ids);
+    this.expenses = this.expenses.filter((x) => !gone.has(x.id));
+    for (const id of ids) this.queue.push({ t: 'delete', id });
+    this.changed();
+    void this.flush();
+  }
+
+  /** All parts of a split expense (the expense itself when it isn't split). */
+  splitParts(e: Expense): Expense[] {
+    return e.group ? this.expenses.filter((x) => x.group === e.group) : [e];
   }
 
   /** Creates (previous = null) or updates a category; renaming also renames it on existing expenses. */
@@ -261,8 +312,16 @@ class Store {
     else {
       this.categories = this.categories.map((x) => (x.name === previous ? c : x));
       if (previous !== c.name) {
-        this.expenses = this.expenses.map((e) => (e.category === previous ? { ...e, category: c.name } : e));
+        this.expenses = this.expenses.map((e) => ({
+          ...e,
+          category: e.category === previous ? c.name : e.category,
+          tags: e.tags.map((tag) => (tag === previous ? c.name : tag)),
+        }));
         this.queue.push({ t: 'rename', from: previous, to: c.name });
+        if (this.budgets.some((b) => b.category === previous)) {
+          this.budgets = this.budgets.map((b) => (b.category === previous ? { ...b, category: c.name } : b));
+          this.queue.push({ t: 'budgets', rows: this.budgets.map(budgetToRow) });
+        }
       }
     }
     this.enqueue({ t: 'categories', rows: this.categories.map(categoryToRow) });
@@ -270,20 +329,49 @@ class Store {
 
   deleteCategory(name: string): void {
     this.categories = this.categories.filter((c) => c.name !== name);
+    if (this.budgets.some((b) => b.category === name)) {
+      this.budgets = this.budgets.filter((b) => b.category !== name);
+      this.queue.push({ t: 'budgets', rows: this.budgets.map(budgetToRow) });
+    }
     this.enqueue({ t: 'categories', rows: this.categories.map(categoryToRow) });
   }
 
-  /** Monthly budget (the same amount every month), or null when not set. */
-  get budget(): Budget | null {
-    const amount = Number(this.settings.monthlyBudget);
-    const currency = String(this.settings.budgetCurrency ?? '');
-    return amount > 0 ? { amount, currency: isCurrency(currency) ? currency : mainCurrency } : null;
+  /** The budget in force in that month for a category ('' = the overall one). */
+  budgetFor(month: string, category = ''): Budget | null {
+    return budgetAt(this.budgets, month, category);
   }
 
-  setBudget(budget: Budget | null): void {
-    const { monthlyBudget: _a, budgetCurrency: _c, ...rest } = this.settings;
-    this.settings = budget ? { ...rest, monthlyBudget: budget.amount, budgetCurrency: budget.currency } : rest;
-    this.enqueue({ t: 'settings', rows: settingsToRows(this.settings) });
+  /** The overall budget of the current month. */
+  get budget(): Budget | null {
+    return this.budgetFor(today().slice(0, 7));
+  }
+
+  /** Every category that has a budget in force in that month. */
+  categoryBudgets(month: string): Map<string, Budget> {
+    const out = new Map<string, Budget>();
+    for (const c of this.categories) {
+      const b = this.budgetFor(month, c.name);
+      if (b) out.set(c.name, b);
+    }
+    return out;
+  }
+
+  /**
+   * Sets a budget from this month on (amount 0 removes it), leaving past months untouched.
+   * Any budget kept by an older version in Settings moves into the Budgets sheet.
+   */
+  setBudget(amount: number, category = ''): void {
+    const month = today().slice(0, 7);
+    const rest = this.budgets.filter((b) => !(b.month === month && b.category === category));
+    this.budgets = [...rest, { month, category, amount, currency: mainCurrency }].sort(
+      (a, b) => a.month.localeCompare(b.month) || a.category.localeCompare(b.category),
+    );
+    this.enqueue({ t: 'budgets', rows: this.budgets.map(budgetToRow) });
+    if (this.settings.monthlyBudget !== undefined) {
+      const { monthlyBudget: _a, budgetCurrency: _c, ...rest } = this.settings;
+      this.settings = rest;
+      this.enqueue({ t: 'settings', rows: settingsToRows(this.settings) });
+    }
   }
 
   category(name: string): Category | undefined {

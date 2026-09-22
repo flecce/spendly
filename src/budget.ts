@@ -28,6 +28,8 @@ export interface BudgetStatus {
   projected: number;
   /** What can be spent per remaining day (today included), or null when nothing is left. */
   daily: number | null;
+  /** '' for the overall budget. */
+  category: string;
   state: BudgetState;
 }
 
@@ -36,14 +38,18 @@ const PACE_SLACK = 0.05;
 /** Warn anyway past this share of the budget. */
 const NEAR_LIMIT = 0.9;
 
-export function budgetStatus(expenses: Expense[], budget: Budget, day = today()): BudgetStatus {
+/** Money out only: income never eats into a budget. */
+export const isSpending = (e: Expense): boolean => e.type !== 'income';
+
+export function budgetStatus(expenses: Expense[], budget: Budget, day = today(), category = ''): BudgetStatus {
   const month = day.slice(0, 7);
   const [y, m, d] = day.split('-').map(Number);
   const daysInMonth = new Date(y, m, 0).getDate();
   const amount = toMain(budget.amount, budget.currency, day) ?? budget.amount;
   let spent = 0;
   for (const e of expenses) {
-    if (e.date.startsWith(month)) spent += toMain(e.amount, e.currency, e.date) ?? 0;
+    const counts = isSpending(e) && e.date.startsWith(month) && (!category || e.category === category);
+    if (counts) spent += toMain(e.amount, e.currency, e.date) ?? 0;
   }
   const pace = d / daysInMonth;
   const remaining = amount - spent;
@@ -58,15 +64,26 @@ export function budgetStatus(expenses: Expense[], budget: Budget, day = today())
     pace,
     projected: (spent / d) * daysInMonth,
     daily: remaining > 0 ? remaining / (daysInMonth - d + 1) : null,
+    category,
     state,
   };
 }
 
-export function currentBudgetStatus(): BudgetStatus | null {
-  const budget = store.budget;
+/** Status of the overall budget (or of one category) for the month that contains `day`. */
+export function budgetStatusFor(category = '', day = today()): BudgetStatus | null {
+  const budget = store.budgetFor(day.slice(0, 7), category);
   if (!budget) return null;
-  if (budget.currency !== mainCurrency) void ensureRates([budget.currency], today());
-  return budgetStatus(store.expenses, budget);
+  if (budget.currency !== mainCurrency) void ensureRates([budget.currency], day);
+  return budgetStatus(store.expenses, budget, day, category);
+}
+
+export const currentBudgetStatus = (): BudgetStatus | null => budgetStatusFor();
+
+/** Budget status of every category that has one, worst first. */
+export function categoryBudgetStatuses(day = today()): BudgetStatus[] {
+  return [...store.categoryBudgets(day.slice(0, 7))]
+    .map(([category, budget]) => budgetStatus(store.expenses, budget, day, category))
+    .sort((a, b) => b.ratio - a.ratio);
 }
 
 /** Average spent per month over the (up to) 3 most recent past months with expenses, rounded. */
@@ -75,7 +92,7 @@ export function suggestedBudget(expenses: Expense[], day = today()): number | nu
   const totals = new Map<string, number>();
   for (const e of expenses) {
     const month = e.date.slice(0, 7);
-    const v = month < thisMonth ? toMain(e.amount, e.currency, e.date) : null;
+    const v = month < thisMonth && isSpending(e) ? toMain(e.amount, e.currency, e.date) : null;
     if (v !== null) totals.set(month, (totals.get(month) ?? 0) + v);
   }
   const recent = [...totals]
@@ -158,18 +175,19 @@ export function budgetStrip(s: BudgetStatus | null): SafeHtml {
 
 // ---- Editor ----
 
-export function openBudgetEditor(): void {
-  const current = store.budget;
+export function openBudgetEditor(category = ''): void {
+  const current = store.budgetFor(today().slice(0, 7), category);
   const currentAmount = current ? (toMain(current.amount, current.currency, today()) ?? current.amount) : null;
-  const suggestion = suggestedBudget(store.expenses);
+  const suggestion = category ? null : suggestedBudget(store.expenses);
 
   const dialog = openSheet(html`
     <form class="sheet-body budget-form" novalidate>
       <div class="sheet-head">
-        <h2>${t('monthlyBudget')}</h2>
+        <h2>${category || t('monthlyBudget')}</h2>
         <button type="button" class="icon-btn" data-action="close" aria-label="${t('close')}">${icon('x')}</button>
       </div>
-      <p class="hint">${t('budgetHint')}</p>
+      <p class="hint">${category ? t('categoryBudgetHint') : t('budgetHint')}</p>
+      <p class="hint">${t('budgetFromHint', { month: formatDate(`${today().slice(0, 7)}-01`, { month: 'long', year: 'numeric' }) })}</p>
       <div class="field">
         <label class="label" for="budget-amount">${t('monthlyBudget')}</label>
         <span class="amount-input">
@@ -205,7 +223,7 @@ export function openBudgetEditor(): void {
     const action = target.closest<HTMLElement>('[data-action]')?.dataset.action;
     if (action === 'close') dialog.close();
     if (action === 'remove') {
-      store.setBudget(null);
+      store.setBudget(0, category);
       toast(t('budgetRemoved'));
       dialog.close();
     }
@@ -219,7 +237,7 @@ export function openBudgetEditor(): void {
       input.focus();
       return;
     }
-    store.setBudget({ amount, currency: mainCurrency });
+    store.setBudget(amount, category);
     toast(t('budgetSaved'));
     dialog.close();
   });

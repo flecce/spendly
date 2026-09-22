@@ -1,7 +1,7 @@
-import { budgetCard, currentBudgetStatus, openBudgetEditor } from '../budget';
+import { budgetCard, currentBudgetStatus, isSpending, openBudgetEditor } from '../budget';
 import { themedColor } from '../defaults';
 import { addDays, daysBetween, formatDate, fromIso, money, moneyCompact, today } from '../format';
-import { html } from '../html';
+import { html, type SafeHtml } from '../html';
 import { countLabel, t, type Key } from '../i18n';
 import { icon } from '../icons';
 import { onRatesChange, toMain } from '../rates';
@@ -10,6 +10,7 @@ import { store } from '../store';
 import { $, categoryBadge, categoryLabel, dayLabel, expenseRow } from '../ui';
 
 type Preset = '7d' | '30d' | 'month' | 'lastMonth' | 'year' | 'custom';
+type Unit = 'day' | 'week' | 'month';
 
 const PRESETS: [Preset, Key][] = [
   ['7d', 'last7'],
@@ -20,10 +21,19 @@ const PRESETS: [Preset, Key][] = [
   ['custom', 'custom'],
 ];
 
+const UNITS: [Unit, Key][] = [
+  ['day', 'byDay'],
+  ['week', 'byWeek'],
+  ['month', 'byMonth'],
+];
+
 // Kept across page switches during the session; the default period is the last 30 days.
 let preset: Preset = '30d';
 let custom = { from: addDays(today(), -29), to: today() };
+/** null = every category. Scopes the whole page: totals, chart and list. */
 let filter: string | null = null;
+/** null = grouping chosen from the length of the period. */
+let unitChoice: Unit | null = null;
 
 function period(): [string, string] {
   const d = today();
@@ -35,8 +45,7 @@ function period(): [string, string] {
     case 'month':
       return [d.slice(0, 8) + '01', d];
     case 'lastMonth': {
-      const firstOfThis = d.slice(0, 8) + '01';
-      const lastOfPrev = addDays(firstOfThis, -1);
+      const lastOfPrev = addDays(d.slice(0, 8) + '01', -1);
       return [lastOfPrev.slice(0, 8) + '01', lastOfPrev];
     }
     case 'year':
@@ -46,22 +55,26 @@ function period(): [string, string] {
   }
 }
 
-// ---- Time buckets: days for short periods, then weeks, then months ----
+/** Up to two weeks stays daily, up to four months goes weekly, longer periods go monthly. */
+const autoUnit = (span: number): Unit => (span <= 14 ? 'day' : span <= 120 ? 'week' : 'month');
+
+const monthsBetween = (from: string, to: string): number =>
+  (Number(to.slice(0, 4)) - Number(from.slice(0, 4))) * 12 + (Number(to.slice(5, 7)) - Number(from.slice(5, 7))) + 1;
+
+// ---- Time buckets ----
 
 interface Bucket {
   key: string;
   tick: string;
   tip: string;
   value: number;
+  /** Budget of the month this bucket covers (monthly grouping only). */
+  budget: number | null;
 }
 
-function weekStart(iso: string): string {
-  return addDays(iso, -((fromIso(iso).getDay() + 6) % 7));
-}
+const weekStart = (iso: string): string => addDays(iso, -((fromIso(iso).getDay() + 6) % 7));
 
-function buckets(items: Expense[], value: (e: Expense) => number, from: string, to: string): Bucket[] {
-  const span = daysBetween(from, to) + 1;
-  const unit = span <= 45 ? 'day' : span <= 190 ? 'week' : 'month';
+function buckets(items: Expense[], value: (e: Expense) => number, from: string, to: string, unit: Unit): Bucket[] {
   const keyOf = (iso: string) =>
     unit === 'day' ? iso : unit === 'week' ? (weekStart(iso) < from ? from : weekStart(iso)) : iso.slice(0, 7);
   const short = (iso: string) => formatDate(iso, { day: 'numeric', month: 'short' });
@@ -71,12 +84,14 @@ function buckets(items: Expense[], value: (e: Expense) => number, from: string, 
   for (let day = from; day <= to; day = addDays(day, 1)) {
     const key = keyOf(day);
     if (index.has(key)) continue;
-    const b: Bucket =
+    const budget = unit === 'month' ? (store.budgetFor(key, filter ?? '')?.amount ?? null) : null;
+    const label =
       unit === 'day'
-        ? { key, tick: short(day), tip: dayLabel(day), value: 0 }
+        ? { tick: short(day), tip: dayLabel(day) }
         : unit === 'week'
-          ? { key, tick: short(day), tip: t('weekOf', { d: short(day) }), value: 0 }
-          : { key, tick: formatDate(day, { month: 'short' }), tip: formatDate(day, { month: 'long', year: 'numeric' }), value: 0 };
+          ? { tick: short(day), tip: t('weekOf', { d: short(day) }) }
+          : { tick: formatDate(day, { month: 'short' }), tip: formatDate(day, { month: 'long', year: 'numeric' }) };
+    const b: Bucket = { key, value: 0, budget, ...label };
     list.push(b);
     index.set(key, b);
   }
@@ -99,19 +114,18 @@ function chartSvg(bs: Bucket[], width: number): string {
   const { height, top, bottom, left, right } = CHART;
   const plotW = Math.max(40, width - left - right);
   const plotH = height - top - bottom;
-  const max = niceMax(Math.max(0, ...bs.map((b) => b.value)));
+  const max = niceMax(Math.max(0, ...bs.map((b) => Math.max(b.value, b.budget ?? 0))));
   const band = plotW / bs.length;
   const barW = Math.max(2, Math.min(24, band - 2));
   const base = top + plotH;
+  const y = (v: number) => base - (v / max) * plotH;
 
   const grid = [0, max / 2, max]
-    .map((v) => {
-      const y = base - (v / max) * plotH;
-      return (
-        `<line class="${v === 0 ? 'axis' : 'grid'}" x1="${left}" x2="${left + plotW}" y1="${y}" y2="${y}"/>` +
-        html`<text class="tick" x="${left - 8}" y="${y + 4}" text-anchor="end">${moneyCompact(v)}</text>`.value
-      );
-    })
+    .map(
+      (v) =>
+        `<line class="${v === 0 ? 'axis' : 'grid'}" x1="${left}" x2="${left + plotW}" y1="${y(v)}" y2="${y(v)}"/>` +
+        html`<text class="tick" x="${left - 8}" y="${y(v) + 4}" text-anchor="end">${moneyCompact(v)}</text>`.value,
+    )
     .join('');
 
   const bars = bs
@@ -125,6 +139,11 @@ function chartSvg(bs: Bucket[], width: number): string {
     })
     .join('');
 
+  // A dashed marker over each bar at the budget of that month.
+  const budgets = bs
+    .map((b, i) => (b.budget ? `<line class="budget-line" x1="${left + i * band + 1}" x2="${left + (i + 1) * band - 1}" y1="${y(b.budget)}" y2="${y(b.budget)}"/>` : ''))
+    .join('');
+
   const tickIdx = [...new Set([0, Math.floor((bs.length - 1) / 2), bs.length - 1])];
   const ticks = tickIdx
     .map((i) => {
@@ -135,7 +154,7 @@ function chartSvg(bs: Bucket[], width: number): string {
     .join('');
 
   return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${html`${t('overTime')}`.value}" tabindex="0">
-    ${grid}${bars}${ticks}<line class="cursor" x1="0" x2="0" y1="${top}" y2="${base}" visibility="hidden"/></svg>`;
+    ${grid}${bars}${budgets}${ticks}<line class="cursor" x1="0" x2="0" y1="${top}" y2="${base}" visibility="hidden"/></svg>`;
 }
 
 // ---- Page ----
@@ -143,8 +162,41 @@ function chartSvg(bs: Bucket[], width: number): string {
 export function mountDashboard(view: HTMLElement): () => void {
   let resizeObserver: ResizeObserver | null = null;
 
+  /** One category row: share of the period and, for a single month, how it sits against its budget. */
+  function categoryBar(name: string, c: { total: number; count: number }, maxCat: number, catTotal: number, monthDay: string | null): SafeHtml {
+    // An empty name means "uncategorized": it has no budget of its own (that key is the overall one).
+    const budget = monthDay && name ? store.budgetFor(monthDay.slice(0, 7), name) : null;
+    const budgetAmount = budget ? (toMain(budget.amount, budget.currency, monthDay!) ?? budget.amount) : null;
+    const over = budgetAmount !== null && c.total > budgetAmount;
+    return html`<li>
+      <button type="button" data-cat="${name}" aria-pressed="${String(filter === name)}">
+        ${categoryBadge(name)}
+        <span class="catbar-main">
+          <span class="catbar-top">
+            <span class="catbar-name">${categoryLabel(name)}</span>
+            <span class="catbar-value ${over ? 'over' : ''}">${money(c.total)}</span>
+          </span>
+          <span class="catbar-track">
+            <span class="catbar-fill" style="width:${Math.max(0, (c.total / maxCat) * 100).toFixed(1)}%;--c:${themedColor(store.category(name)?.color ?? '#898781')}"></span>
+            ${budgetAmount ? html`<span class="catbar-budget" style="left:${Math.min(100, (budgetAmount / maxCat) * 100).toFixed(1)}%" title="${t('budget')}"></span>` : ''}
+          </span>
+          <span class="catbar-meta">
+            ${countLabel(c.count)} · ${catTotal > 0 ? Math.round((c.total / catTotal) * 100) : 0}%${budgetAmount
+              ? html` · ${t('budgetSpentOf', { spent: money(c.total), budget: money(budgetAmount) })}`
+              : ''}
+          </span>
+        </span>
+      </button>
+    </li>`;
+  }
+
   function render(): void {
     const [from, to] = period();
+    const unit = unitChoice ?? autoUnit(daysBetween(from, to) + 1);
+    if (filter !== null && !store.expenses.some((e) => e.category === filter) && !store.categories.some((c) => c.name === filter)) {
+      filter = null;
+    }
+
     const inPeriod = store.expenses.filter((e) => e.date >= from && e.date <= to);
     // Everything is summed in the main currency; amounts whose rate isn't known yet are left out (and flagged).
     const converted = new Map<Expense, number>();
@@ -153,13 +205,22 @@ export function mountDashboard(view: HTMLElement): () => void {
       if (v !== null) converted.set(e, v);
     }
     const value = (e: Expense) => converted.get(e) ?? 0;
-    const items = inPeriod.filter((e) => converted.has(e));
-    const missing = inPeriod.length - items.length;
-    const total = items.reduce((s, e) => s + value(e), 0);
-    const days = Math.max(1, daysBetween(from, to < today() ? to : today()) + 1);
+    const known = inPeriod.filter((e) => converted.has(e));
+    const missing = inPeriod.length - known.length;
+
+    // The category filter scopes the figures, the chart and the list; the breakdown below stays
+    // whole, so it doubles as the category picker.
+    const scoped = filter === null ? known : known.filter((e) => e.category === filter);
+    const spending = scoped.filter(isSpending);
+    const total = spending.reduce((s, e) => s + value(e), 0);
+    const incomeTotal = scoped.filter((e) => !isSpending(e)).reduce((s, e) => s + value(e), 0);
+    const lastDay = to < today() ? to : today();
+    const days = Math.max(1, daysBetween(from, lastDay) + 1);
+    const months = Math.max(1, monthsBetween(from, lastDay));
+    const singleMonth = from.slice(0, 7) === to.slice(0, 7);
 
     const byCat = new Map<string, { total: number; count: number }>();
-    for (const e of items) {
+    for (const e of known.filter(isSpending)) {
       const c = byCat.get(e.category) ?? { total: 0, count: 0 };
       c.total += value(e);
       c.count++;
@@ -167,17 +228,31 @@ export function mountDashboard(view: HTMLElement): () => void {
     }
     const cats = [...byCat].sort((a, b) => b[1].total - a[1].total);
     const maxCat = Math.max(0, ...cats.map(([, c]) => c.total)) || 1;
-    if (filter !== null && !byCat.has(filter)) filter = null;
+    const catTotal = cats.reduce((s, [, c]) => s + c.total, 0);
 
-    const listed = sortByDateDesc(filter === null ? inPeriod : inPeriod.filter((e) => e.category === filter), store.expenses);
+    const listed = sortByDateDesc(scoped, store.expenses);
     const byDay = new Map<string, Expense[]>();
     for (const e of listed) byDay.set(e.date, [...(byDay.get(e.date) ?? []), e]);
 
-    // The budget is always about the current month, so it sits above the period filters.
     view.innerHTML = html`
       ${budgetCard(currentBudgetStatus())}
       <div class="filters" role="group" aria-label="${t('period')}">
-        ${PRESETS.map(([p, key]) => html`<button type="button" class="chip" data-preset="${p}" aria-pressed="${String(p === preset)}">${t(key)}</button>`)}
+        ${PRESETS.map((p) => html`<button type="button" class="chip" data-preset="${p[0]}" aria-pressed="${String(p[0] === preset)}">${t(p[1])}</button>`)}
+      </div>
+      <div class="filter-selects">
+        <label class="field">
+          <span class="sr-only">${t('category')}</span>
+          <select name="category">
+            <option value="" ${filter === null ? html`selected` : ''}>${t('allCategories')}</option>
+            ${store.categories.map((c) => html`<option value="${c.name}" ${filter === c.name ? html`selected` : ''}>${c.icon} ${c.name}</option>`)}
+          </select>
+        </label>
+        <label class="field" title="${t('groupBy')}">
+          <span class="sr-only">${t('groupBy')}</span>
+          <select name="unit" aria-label="${t('groupBy')}">
+            ${UNITS.map((u) => html`<option value="${u[0]}" ${u[0] === unit ? html`selected` : ''}>${t(u[1])}</option>`)}
+          </select>
+        </label>
       </div>
       ${preset === 'custom'
         ? html`<div class="custom-range card">
@@ -188,39 +263,31 @@ export function mountDashboard(view: HTMLElement): () => void {
       <div class="dash">
         <div class="dash-col">
           <section class="card hero">
-            <span class="label">${t('totalSpent')}</span>
+            <span class="label">${t('totalSpent')}${filter !== null ? html` · ${filter}` : ''}</span>
             <span class="hero-value">${money(total)}</span>
             <span class="hero-period">${formatDate(from, { day: 'numeric', month: 'short', year: 'numeric' })} – ${formatDate(to, { day: 'numeric', month: 'short', year: 'numeric' })}</span>
             <div class="stats">
-              <div><span class="label">${t('expensesCount')}</span><strong>${inPeriod.length}</strong></div>
+              <div><span class="label">${t('expensesCount')}</span><strong>${spending.length}</strong></div>
               <div><span class="label">${t('perDay')}</span><strong>${money(total / days)}</strong></div>
+              ${months > 1 ? html`<div><span class="label">${t('perMonth')}</span><strong>${money(total / months)}</strong></div>` : ''}
+              ${incomeTotal > 0
+                ? html`<div><span class="label">${t('income')}</span><strong class="income">${money(incomeTotal)}</strong></div>
+                    <div><span class="label">${t('balance')}</span><strong class="${incomeTotal - total >= 0 ? 'income' : ''}">${money(incomeTotal - total)}</strong></div>`
+                : ''}
             </div>
             ${missing ? html`<p class="notice">${icon('alert')}<span>${t('notConverted', { n: missing })}</span></p>` : ''}
           </section>
           <section class="card chart-card">
-            <h2>${t('overTime')}</h2>
+            <div class="section-head">
+              <h2>${t('overTime')}</h2>
+              ${unit === 'month' && store.budgets.length ? html`<span class="legend">${icon('minus')}${t('budget')}</span>` : ''}
+            </div>
             <div class="chart" id="chart"><div class="chart-tip" role="status" hidden></div></div>
           </section>
           <section class="card cats-card">
             <h2>${t('byCategory')}</h2>
             ${cats.length
-              ? html`<ul class="catbars">
-                  ${cats.map(
-                    ([name, c]) => html`<li>
-                      <button type="button" data-cat="${name}" aria-pressed="${String(filter === name)}">
-                        ${categoryBadge(name)}
-                        <span class="catbar-main">
-                          <span class="catbar-top">
-                            <span class="catbar-name">${categoryLabel(name)}</span>
-                            <span class="catbar-value">${money(c.total)}</span>
-                          </span>
-                          <span class="catbar-track"><span class="catbar-fill" style="width:${Math.max(0, (c.total / maxCat) * 100).toFixed(1)}%;--c:${themedColor(store.category(name)?.color ?? '#898781')}"></span></span>
-                          <span class="catbar-meta">${countLabel(c.count)} · ${total > 0 ? Math.round((c.total / total) * 100) : 0}%</span>
-                        </span>
-                      </button>
-                    </li>`,
-                  )}
-                </ul>`
+              ? html`<ul class="catbars">${cats.map(([name, c]) => categoryBar(name, c, maxCat, catTotal, singleMonth ? to : null))}</ul>`
               : html`<p class="empty">${t('noData')}</p>`}
           </section>
         </div>
@@ -232,7 +299,7 @@ export function mountDashboard(view: HTMLElement): () => void {
             </div>
             ${listed.length
               ? [...byDay].map(
-                  ([day, list]) => html`<h3 class="day-head"><span>${dayLabel(day)}</span><span>${money(list.reduce((s, e) => s + value(e), 0))}</span></h3>
+                  ([day, list]) => html`<h3 class="day-head"><span>${dayLabel(day)}</span><span>${money(list.filter(isSpending).reduce((s, e) => s + value(e), 0))}</span></h3>
                     <ul class="list">${list.map((e) => expenseRow(e, { showDate: false }))}</ul>`,
                 )
               : html`<p class="empty">${t('noData')}</p>`}
@@ -241,7 +308,7 @@ export function mountDashboard(view: HTMLElement): () => void {
       </div>
     `.value;
 
-    mountChart(buckets(items, value, from, to));
+    mountChart(buckets(spending, value, from, to, unit));
   }
 
   function mountChart(bs: Bucket[]): void {
@@ -267,11 +334,17 @@ export function mountDashboard(view: HTMLElement): () => void {
       cursor.setAttribute('x2', String(x));
       cursor.setAttribute('visibility', 'visible');
       tip.replaceChildren();
-      const value = document.createElement('strong');
-      value.textContent = money(bs[active].value);
+      const amount = document.createElement('strong');
+      amount.textContent = money(bs[active].value);
       const label = document.createElement('span');
       label.textContent = bs[active].tip;
-      tip.append(value, label);
+      tip.append(amount, label);
+      const budget = bs[active].budget;
+      if (budget) {
+        const line = document.createElement('span');
+        line.textContent = `${t('budget')} ${money(budget)}`;
+        tip.append(line);
+      }
       tip.hidden = false;
       tip.style.left = `${Math.min(Math.max(x, 60), box.clientWidth - 60)}px`;
     };
@@ -320,16 +393,13 @@ export function mountDashboard(view: HTMLElement): () => void {
     resizeObserver.observe(box);
   }
 
-  view.addEventListener('click', onClick);
-  view.addEventListener('change', onChange);
-
   function onClick(e: Event): void {
     const target = e.target as Element;
     if (target.closest('[data-action=budget]')) return openBudgetEditor();
     const presetBtn = target.closest<HTMLElement>('[data-preset]');
     if (presetBtn) {
       preset = presetBtn.dataset.preset as Preset;
-      filter = null;
+      unitChoice = null;
       return render();
     }
     const catBtn = target.closest<HTMLElement>('[data-cat]');
@@ -348,12 +418,20 @@ export function mountDashboard(view: HTMLElement): () => void {
 
   function onChange(e: Event): void {
     const input = e.target as HTMLInputElement;
-    if ((input.name === 'from' || input.name === 'to') && input.value) {
+    if (input.name === 'category') {
+      filter = input.value || null;
+      render();
+    } else if (input.name === 'unit') {
+      unitChoice = input.value as Unit;
+      render();
+    } else if ((input.name === 'from' || input.name === 'to') && input.value) {
       custom = { ...custom, [input.name]: input.value };
       render();
     }
   }
 
+  view.addEventListener('click', onClick);
+  view.addEventListener('change', onChange);
   render();
   const off = store.on((topic) => topic === 'data' && render());
   const offRates = onRatesChange(render);

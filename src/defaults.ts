@@ -121,6 +121,13 @@ const SEEDS: Seed[] = [
   },
 ];
 
+/** The same standard category in another language, or null when it isn't a standard one. */
+export function seedNameFor(name: string, lang: Lang): string | null {
+  const wanted = name.trim().toLowerCase();
+  const seed = SEEDS.find((s) => Object.values(s.names).some((v) => v.toLowerCase() === wanted));
+  return seed ? seed.names[lang] : null;
+}
+
 export function defaultCategories(lang: Lang): Category[] {
   return SEEDS.map((s) => ({
     name: s.names[lang],

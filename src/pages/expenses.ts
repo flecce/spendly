@@ -1,10 +1,11 @@
+import { isSpending } from '../budget';
 import { normalize } from '../categorize';
 import { formatDate, money } from '../format';
 import { html } from '../html';
 import { countLabel, t } from '../i18n';
 import { icon } from '../icons';
 import { onRatesChange, toMain } from '../rates';
-import { sortByDateDesc, type Expense } from '../schema';
+import { allCategories, sortByDateDesc, type Expense } from '../schema';
 import { store } from '../store';
 import { $, categoryLabel, dayLabel, expenseRow } from '../ui';
 
@@ -16,9 +17,20 @@ let query = '';
 
 const valueOf = (e: Expense) => toMain(e.amount, e.currency, e.date) ?? 0;
 
-function groupTotals(list: Expense[], key: (e: Expense) => string): Map<string, number> {
-  const totals = new Map<string, number>();
-  for (const e of list) totals.set(key(e), (totals.get(key(e)) ?? 0) + valueOf(e));
+interface Sums {
+  spent: number;
+  income: number;
+}
+
+/** Totals per group, keeping money out and money in apart. */
+function groupTotals(list: Expense[], key: (e: Expense) => string): Map<string, Sums> {
+  const totals = new Map<string, Sums>();
+  for (const e of list) {
+    const sums = totals.get(key(e)) ?? { spent: 0, income: 0 };
+    if (isSpending(e)) sums.spent += valueOf(e);
+    else sums.income += valueOf(e);
+    totals.set(key(e), sums);
+  }
   return totals;
 }
 
@@ -48,7 +60,7 @@ export function mountExpenses(view: HTMLElement): () => void {
     observer?.disconnect();
     const q = normalize(query);
     const all = sortByDateDesc(store.expenses, store.expenses);
-    const matches = q ? all.filter((e) => normalize(`${e.note} ${categoryLabel(e.category)}`).includes(q)) : all;
+    const matches = q ? all.filter((e) => normalize(`${e.note} ${allCategories(e).join(' ') || categoryLabel('')}`).includes(q)) : all;
     count.textContent = countLabel(matches.length);
 
     if (!matches.length) {
@@ -73,10 +85,13 @@ export function mountExpenses(view: HTMLElement): () => void {
         ([month, days]) => html`<section class="card month-card">
           <div class="month-head">
             <h2>${formatDate(`${month}-01`, { month: 'long', year: 'numeric' })}</h2>
-            <strong>${money(monthTotals.get(month) ?? 0)}</strong>
+            <span class="month-sums">
+              <strong>${money(monthTotals.get(month)?.spent ?? 0)}</strong>
+              ${monthTotals.get(month)?.income ? html`<span class="income">+ ${money(monthTotals.get(month)!.income)}</span>` : ''}
+            </span>
           </div>
           ${[...days].map(
-            ([day, items]) => html`<h3 class="day-head"><span>${dayLabel(day)}</span><span>${money(dayTotals.get(day) ?? 0)}</span></h3>
+            ([day, items]) => html`<h3 class="day-head"><span>${dayLabel(day)}</span><span>${money(dayTotals.get(day)?.spent ?? 0)}</span></h3>
               <ul class="list">${items.map((e) => expenseRow(e, { showDate: false }))}</ul>`,
           )}
         </section>`,

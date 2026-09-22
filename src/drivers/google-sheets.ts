@@ -1,8 +1,8 @@
-import { CATEGORY_HEADER, EXPENSE_HEADER, rowIds, SETTINGS_HEADER, type Cell, type Row, type SheetName } from '../schema';
+import { BUDGET_HEADER, CATEGORY_HEADER, EXPENSE_HEADER, rowIds, SETTINGS_HEADER, type Cell, type Row, type SheetName } from '../schema';
 import { api, isNotFound, type TokenGetter } from './http';
 import type { Driver } from './types';
 
-const EXPENSES = 'Expenses!A2:F';
+const EXPENSES = 'Expenses!A2:I';
 const SHEETS = 'https://sheets.googleapis.com/v4/spreadsheets';
 const DRIVE = 'https://www.googleapis.com/drive/v3/files';
 const TITLE = 'Spendly';
@@ -80,6 +80,7 @@ export class GoogleSheetsDriver implements Driver {
         sheets: [
           sheet('Expenses', [EXPENSE_HEADER]),
           sheet('Categories', [CATEGORY_HEADER, ...seedCategories]),
+          sheet('Budgets', [BUDGET_HEADER]),
           sheet('Settings', [SETTINGS_HEADER]),
         ],
       }),
@@ -99,7 +100,12 @@ export class GoogleSheetsDriver implements Driver {
     this.fileUrl = meta.spreadsheetUrl;
     this.sheetIds = new Map(meta.sheets.map((s) => [s.properties.title, s.properties.sheetId]));
     // Add sheets missing from older files or deleted by hand, so reads and writes keep working.
-    const sheets = [['Expenses', EXPENSE_HEADER], ['Categories', CATEGORY_HEADER], ['Settings', SETTINGS_HEADER]] as const;
+    const sheets = [
+      ['Expenses', EXPENSE_HEADER],
+      ['Categories', CATEGORY_HEADER],
+      ['Budgets', BUDGET_HEADER],
+      ['Settings', SETTINGS_HEADER],
+    ] as const;
     for (const [title, header] of sheets) {
       if (this.sheetIds.has(title)) continue;
       const res = await this.call<{ replies: { addSheet: { properties: { sheetId: number } } }[] }>(`${SHEETS}/${id}:batchUpdate`, {
@@ -109,17 +115,28 @@ export class GoogleSheetsDriver implements Driver {
       this.sheetIds.set(title, res.replies[0].addSheet.properties.sheetId);
       await this.put(`${title}!A1`, [header]);
     }
+    await this.repairHeader();
+  }
+
+  /** Files written by an older version have fewer columns: bring the header row up to date. */
+  private async repairHeader(): Promise<void> {
+    const res = await this.call<ValueRange>(this.values('Expenses!A1:I1'));
+    const current = (res.values?.[0] ?? []).map(String);
+    if (EXPENSE_HEADER.some((h, i) => current[i] !== h)) await this.put('Expenses!A1:I1', [EXPENSE_HEADER]);
   }
 
   async read() {
-    const ranges = [EXPENSES, 'Categories!A2:D', 'Settings!A2:B'].map((r) => `ranges=${encodeURIComponent(r)}`).join('&');
+    const ranges = [EXPENSES, 'Categories!A2:D', 'Budgets!A2:D', 'Settings!A2:B']
+      .map((r) => `ranges=${encodeURIComponent(r)}`)
+      .join('&');
     const res = await this.call<{ valueRanges: ValueRange[] }>(
       `${SHEETS}/${this.id}/values:batchGet?${ranges}&valueRenderOption=UNFORMATTED_VALUE`,
     );
     return {
       expenses: res.valueRanges[0].values ?? [],
       categories: res.valueRanges[1].values ?? [],
-      settings: res.valueRanges[2].values ?? [],
+      budgets: res.valueRanges[2].values ?? [],
+      settings: res.valueRanges[3].values ?? [],
     };
   }
 
@@ -140,7 +157,7 @@ export class GoogleSheetsDriver implements Driver {
 
   async appendExpense(row: Row): Promise<void> {
     // RAW keeps notes like "=1+1" or "1/2" as plain text.
-    await this.call(this.values('Expenses!A1:F1', ':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS'), {
+    await this.call(this.values('Expenses!A1:I1', ':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS'), {
       method: 'POST',
       body: JSON.stringify({ values: [row] }),
     });
@@ -149,7 +166,7 @@ export class GoogleSheetsDriver implements Driver {
   async upsertExpense(id: string, row: Row): Promise<void> {
     const r = await this.rowOf(id);
     if (r < 0) return this.appendExpense(row);
-    await this.put(`Expenses!A${r}:F${r}`, [row]);
+    await this.put(`Expenses!A${r}:I${r}`, [row]);
   }
 
   async deleteExpense(id: string): Promise<void> {
@@ -169,13 +186,21 @@ export class GoogleSheetsDriver implements Driver {
     await this.call(this.values(`Categories!A${rows.length + 2}:D`, ':clear'), { method: 'POST' });
   }
 
+  async writeBudgets(rows: Row[]): Promise<void> {
+    if (rows.length) await this.put(`Budgets!A2:D${rows.length + 1}`, rows);
+    await this.call(this.values(`Budgets!A${rows.length + 2}:D`, ':clear'), { method: 'POST' });
+  }
+
   async writeSettings(rows: Row[]): Promise<void> {
     if (rows.length) await this.put(`Settings!A2:B${rows.length + 1}`, rows);
     await this.call(this.values(`Settings!A${rows.length + 2}:B`, ':clear'), { method: 'POST' });
   }
 
   async writeExpenseCategories(values: string[]): Promise<void> {
-    if (!values.length) return;
-    await this.put(`Expenses!D2:D${values.length + 1}`, values.map((v) => [v]));
+    if (values.length) await this.put(`Expenses!D2:D${values.length + 1}`, values.map((v) => [v]));
+  }
+
+  async writeExpenseTags(values: string[]): Promise<void> {
+    if (values.length) await this.put(`Expenses!I2:I${values.length + 1}`, values.map((v) => [v]));
   }
 }

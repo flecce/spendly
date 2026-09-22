@@ -4,7 +4,18 @@ import { mainCurrency } from '../src/format';
 import type { Expense } from '../src/schema';
 
 let n = 0;
-const exp = (date: string, amount: number): Expense => ({ id: String(n++), date, amount, currency: mainCurrency, category: '', note: '' });
+const exp = (date: string, amount: number, extra: Partial<Expense> = {}): Expense => ({
+  id: String(n++),
+  date,
+  amount,
+  currency: mainCurrency,
+  category: '',
+  note: '',
+  type: 'expense',
+  group: '',
+  tags: [],
+  ...extra,
+});
 const budget = (amount: number) => ({ amount, currency: mainCurrency });
 
 describe('budgetStatus', () => {
@@ -51,5 +62,22 @@ describe('suggestedBudget', () => {
 
   it('returns null without history', () => {
     expect(suggestedBudget([exp('2026-09-10', 50)], '2026-09-22')).toBeNull();
+  });
+});
+
+describe('budgetStatus with income and categories', () => {
+  it('ignores income', () => {
+    const list = [exp('2026-09-05', 300), exp('2026-09-06', 2000, { type: 'income' })];
+    const s = budgetStatus(list, budget(1000), '2026-09-10');
+    expect(s.spent).toBe(300);
+    expect(s.state).toBe('ok');
+  });
+
+  it('counts only one category when given one', () => {
+    const list = [exp('2026-09-05', 120, { category: 'Spesa' }), exp('2026-09-06', 400, { category: 'Casa' })];
+    const s = budgetStatus(list, budget(100), '2026-09-10', 'Spesa');
+    expect(s.spent).toBe(120);
+    expect(s.state).toBe('over');
+    expect(s.category).toBe('Spesa');
   });
 });

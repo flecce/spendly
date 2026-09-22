@@ -4,7 +4,20 @@ import { defaultCategories } from '../src/defaults';
 import { crc32, buildXlsx, Style } from '../src/drivers/xlsx';
 import { isoToSerial, mainCurrency, parseAmount, serialToIso, toIsoDate } from '../src/format';
 import { setRatesForTest, toMain } from '../src/rates';
-import { rowIds, rowsToCategories, rowsToExpenses, type Expense } from '../src/schema';
+import { budgetAt, rowIds, rowsToBudgets, rowsToCategories, rowsToExpenses, type Expense } from '../src/schema';
+
+const expense = (e: Partial<Expense>): Expense => ({
+  id: '1',
+  date: '2026-09-01',
+  amount: 1,
+  currency: mainCurrency,
+  category: '',
+  note: '',
+  type: 'expense',
+  group: '',
+  tags: [],
+  ...e,
+});
 
 describe('parseAmount', () => {
   it.each([
@@ -59,17 +72,18 @@ describe('schema', () => {
 
   it('parses expense rows and skips invalid ones, keeping ids aligned with rows', () => {
     const rows = [
-      ['2026-09-01', '12,50', 'usd', ' Spesa ', 'Lidl', 'a'],
+      ['2026-09-01', '12,50', 'usd', ' Spesa ', 'Lidl', 'a', '', 'g1', 'Casa, Spesa'],
       [],
       ['nope', 3, '', '', '', 'b'],
-      [46287, 7, '', 'Svago', '', 'c'],
+      [46287, 7, '', 'Svago', '', 'c', 'INCOME'],
       ['2026-09-02', 1, 'XYZ', '', '', 'd'],
     ];
     const expenses = rowsToExpenses(rows);
     expect(expenses).toEqual([
-      { id: 'a', date: '2026-09-01', amount: 12.5, currency: 'USD', category: 'Spesa', note: 'Lidl' },
-      { id: 'c', date: '2026-09-22', amount: 7, currency: mainCurrency, category: 'Svago', note: '' },
-      { id: 'd', date: '2026-09-02', amount: 1, currency: mainCurrency, category: '', note: '' },
+      // "Spesa" is already the main category, so it is not repeated among the tags.
+      { id: 'a', date: '2026-09-01', amount: 12.5, currency: 'USD', category: 'Spesa', note: 'Lidl', type: 'expense', group: 'g1', tags: ['Casa'] },
+      { id: 'c', date: '2026-09-22', amount: 7, currency: mainCurrency, category: 'Svago', note: '', type: 'income', group: '', tags: [] },
+      { id: 'd', date: '2026-09-02', amount: 1, currency: mainCurrency, category: '', note: '', type: 'expense', group: '', tags: [] },
     ]);
   });
 
@@ -119,9 +133,9 @@ describe('detectCategory', () => {
 
   it('learns from history', () => {
     const history: Expense[] = [
-      { id: '1', date: '2026-09-01', amount: 30, currency: 'EUR', category: name(6), note: 'Calcetto con Marco' },
-      { id: '2', date: '2026-09-08', amount: 30, currency: 'EUR', category: name(6), note: 'Calcetto' },
-      { id: '3', date: '2026-09-10', amount: 12, currency: 'EUR', category: name(3), note: 'Bar sotto casa' },
+      expense({ id: '1', date: '2026-09-01', amount: 30, category: name(6), note: 'Calcetto con Marco' }),
+      expense({ id: '2', date: '2026-09-08', amount: 30, category: name(6), note: 'Calcetto' }),
+      expense({ id: '3', date: '2026-09-10', amount: 12, category: name(3), note: 'Bar sotto casa' }),
     ];
     const model = learn(history);
     expect(detectCategory('calcetto giovedì', it_, model)).toBe(name(6));
@@ -130,7 +144,7 @@ describe('detectCategory', () => {
   });
 
   it('only suggests categories that still exist', () => {
-    const model = learn([{ id: '1', date: '2026-09-01', amount: 3, currency: 'EUR', category: 'Deleted', note: 'gizmo' }]);
+    const model = learn([expense({ id: '1', date: '2026-09-01', amount: 3, category: 'Deleted', note: 'gizmo' })]);
     expect(detectCategory('gizmo', it_, model)).toBeNull();
   });
 });
@@ -173,5 +187,37 @@ describe('toMain', () => {
     expect(toMain(10, 'JPY', '2026-09-18')).toBeNull();
     setRatesForTest(null);
     expect(toMain(10, other, '2026-09-18')).toBeNull();
+  });
+});
+
+describe('budgets', () => {
+  const rows = [
+    ['2026-01', '', 1500, 'EUR'],
+    ['2026-09', '', 1200, 'EUR'],
+    ['2026-03', 'Spesa', 300, 'EUR'],
+    ['nope', '', 100, 'EUR'],
+    ['2026-05', '', 'x', 'EUR'],
+  ];
+
+  it('reads rows, dropping invalid ones, sorted by month', () => {
+    expect(rowsToBudgets(rows).map((b) => [b.month, b.category, b.amount])).toEqual([
+      ['2026-01', '', 1500],
+      ['2026-03', 'Spesa', 300],
+      ['2026-09', '', 1200],
+    ]);
+  });
+
+  it('uses the budget in force in each month, per category', () => {
+    const entries = rowsToBudgets(rows);
+    expect(budgetAt(entries, '2026-05')?.amount).toBe(1500);
+    expect(budgetAt(entries, '2026-09')?.amount).toBe(1200);
+    expect(budgetAt(entries, '2026-12')?.amount).toBe(1200);
+    expect(budgetAt(entries, '2025-12')).toBeNull();
+    expect(budgetAt(entries, '2026-04', 'Spesa')?.amount).toBe(300);
+    expect(budgetAt(entries, '2026-02', 'Spesa')).toBeNull();
+  });
+
+  it('treats a zero amount as no budget', () => {
+    expect(budgetAt(rowsToBudgets([['2026-01', '', 500, 'EUR'], ['2026-06', '', 0, 'EUR']]), '2026-07')).toBeNull();
   });
 });
