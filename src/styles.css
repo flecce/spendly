@@ -1667,6 +1667,74 @@ dialog.sheet::backdrop {
   text-align: left;
 }
 
+/* ---------- All expenses ---------- */
+.search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search .icon {
+  position: absolute;
+  left: 14px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.search input {
+  padding-left: 44px;
+  background-color: var(--surface);
+  border-color: var(--border);
+}
+
+.expense-months {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.month-card {
+  padding: 0 0 6px;
+}
+
+/* The month stays visible while scrolling through its days. */
+.month-head {
+  position: sticky;
+  top: calc(56px + env(safe-area-inset-top));
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 8px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--surface);
+}
+
+.month-head h2 {
+  font-size: 17px;
+}
+
+.month-head h2::first-letter {
+  text-transform: uppercase;
+}
+
+.month-head strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.month-card .day-head {
+  padding: 0 16px;
+}
+
+.month-card .day-head:first-of-type {
+  margin-top: 4px;
+}
+
+.show-more {
+  justify-content: center;
+}
+
 /* ---------- Categories ---------- */
 .cat-top {
   display: flex;

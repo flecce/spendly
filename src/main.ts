@@ -8,6 +8,7 @@ import { googleLogo, icon, logoMark, microsoftLogo, type IconName } from './icon
 import { mountAdd } from './pages/add';
 import { mountCategories } from './pages/categories';
 import { mountDashboard } from './pages/dashboard';
+import { mountExpenses } from './pages/expenses';
 import { initials, openSettings } from './pages/settings';
 import { ensureRatesFor } from './rates';
 import { store } from './store';
@@ -72,6 +73,7 @@ function renderLogin(error: string | null): void {
 
 const TABS: [route: string, icon: IconName, label: () => string][] = [
   ['add', 'plus', () => t('navAdd')],
+  ['expenses', 'list', () => t('navExpenses')],
   ['dashboard', 'chart', () => t('navDashboard')],
   ['categories', 'tag', () => t('navCategories')],
 ];
@@ -156,7 +158,7 @@ function route(): void {
   unmount?.();
   unmount = null;
   const [, name = 'add', arg = ''] = /^#\/?([^/]*)\/?(.*)$/.exec(location.hash) ?? [];
-  const page = ['dashboard', 'categories', 'edit'].includes(name) ? name : 'add';
+  const page = ['expenses', 'dashboard', 'categories', 'edit'].includes(name) ? name : 'add';
   const view = $('#view');
   view.className = `view page-${page}`;
   document.querySelectorAll<HTMLElement>('[data-route]').forEach((a) => {
@@ -177,7 +179,8 @@ function route(): void {
     return;
   }
 
-  if (page === 'dashboard') unmount = mountDashboard(view);
+  if (page === 'expenses') unmount = mountExpenses(view);
+  else if (page === 'dashboard') unmount = mountDashboard(view);
   else if (page === 'categories') unmount = mountCategories(view);
   else unmount = mountAdd(view, page === 'edit' ? decodeURIComponent(arg) : undefined);
 }

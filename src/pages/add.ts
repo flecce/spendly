@@ -93,7 +93,7 @@ export function mountAdd(view: HTMLElement, editId?: string): () => void {
     ${editing
       ? ''
       : html`<section class="recent">
-          <div class="section-head"><h2>${t('recent')}</h2><a href="#/dashboard">${t('seeAll')}</a></div>
+          <div class="section-head"><h2>${t('recent')}</h2><a href="#/expenses">${t('seeAll')}</a></div>
           <ul class="list card" id="recent"></ul>
         </section>`}
   `.value;
