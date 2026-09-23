@@ -183,7 +183,9 @@ export function budgetStrip(s: BudgetStatus | null): SafeHtml {
       <span><strong>${money(s.spent)}</strong> <span class="muted">/ ${money(s.budget)}</span></span>
     </span>
     ${meter(s)}
-    <span class="budget-state">${icon(STATE_ICON[s.state])}<span>${detail}</span></span>
+    <span class="budget-state">${icon(STATE_ICON[s.state])}<span>${detail}</span>${s.income > 0
+      ? html`<span class="budget-strip-balance">${t('balance')} <strong class="${s.income - s.spent >= 0 ? 'income' : ''}">${money(s.income - s.spent)}</strong></span>`
+      : ''}</span>
   </a>`;
 }
 

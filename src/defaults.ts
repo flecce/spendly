@@ -1,6 +1,7 @@
 import { normalize } from './categorize';
 import { LANGS, type Lang } from './i18n';
 import type { Category } from './schema';
+import { isDark } from './theme';
 
 /** Categorical palette (light value → dark-surface step of the same hue). */
 export const PALETTE: [light: string, dark: string][] = [
@@ -16,13 +17,10 @@ export const PALETTE: [light: string, dark: string][] = [
 ];
 
 const DARK = new Map(PALETTE.map(([l, d]) => [l.toLowerCase(), d]));
-const darkQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
 
 /** Category colours are stored as their light value; this picks the step for the current theme. */
 export const themedColor = (hex: string): string =>
-  darkQuery?.matches ? (DARK.get(hex.toLowerCase()) ?? hex) : hex;
-
-export const onThemeChange = (fn: () => void): void => darkQuery?.addEventListener('change', fn);
+  isDark() ? (DARK.get(hex.toLowerCase()) ?? hex) : hex;
 
 interface Seed {
   icon: string;

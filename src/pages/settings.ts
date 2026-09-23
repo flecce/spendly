@@ -7,9 +7,11 @@ import { lang, LANGS, setLang, t, type Lang } from '../i18n';
 import { icon } from '../icons';
 import { ensureRatesFor } from '../rates';
 import { store } from '../store';
+import { setTheme, theme, THEMES, type Theme } from '../theme';
 import { $, confirmDialog, openSheet, toast } from '../ui';
 
 const PROVIDER_NAME: Record<Provider, string> = { google: 'Google', microsoft: 'Microsoft' };
+const THEME_LABEL = { system: 'themeSystem', light: 'themeLight', dark: 'themeDark' } as const;
 const APP_NAME: Record<Provider, string> = { google: 'Google Sheets', microsoft: 'Excel' };
 
 export const initials = (a: Account): string =>
@@ -68,6 +70,13 @@ export function openSettings(account: Account, onPrefsChange: () => void): void 
       </div>
       <p class="hint">${t('mainCurrencyHint')}</p>
 
+      <label class="field">
+        <span class="label">${t('theme')}</span>
+        <select name="theme">
+          ${THEMES.map((th) => html`<option value="${th}" ${th === theme ? html`selected` : ''}>${t(THEME_LABEL[th])}</option>`)}
+        </select>
+      </label>
+
       <button type="button" class="btn ghost block" data-action="budget">
         ${icon('target')}${t('monthlyBudget')}
         <span class="muted">${store.budget ? money(store.budget.amount, store.budget.currency) : t('setBudget')}</span>
@@ -103,6 +112,10 @@ export function openSettings(account: Account, onPrefsChange: () => void): void 
     setMainCurrency((e.target as HTMLSelectElement).value);
     void ensureRatesFor(store.expenses);
     reopen();
+  });
+
+  $<HTMLSelectElement>('[name=theme]', dialog).addEventListener('change', (e) => {
+    setTheme((e.target as HTMLSelectElement).value as Theme);
   });
 
   dialog.addEventListener('click', async (e) => {

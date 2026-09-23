@@ -30,8 +30,9 @@
   --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
 }
 
+/* Dark: follows the system unless the user picked a theme (<html data-theme>, see theme.ts). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     color-scheme: dark;
     --bg: #0d0d0d;
     --surface: #1a1a19;
@@ -55,6 +56,31 @@
     --shadow: none;
   }
 }
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0d0d0d;
+  --surface: #1a1a19;
+  --surface-2: #252523;
+  --text: #ffffff;
+  --text-2: #c3c2b7;
+  --muted: #9a988f;
+  --line: #2c2c2a;
+  --border: rgba(255, 255, 255, 0.1);
+  --grid: #2c2c2a;
+  --axis: #45443f;
+  --accent-hover: #2a78d6;
+  --accent-text: #86b6ef;
+  --accent-soft: rgba(57, 135, 229, 0.18);
+  --series: #3987e5;
+  --danger: #f08080;
+  --danger-soft: rgba(230, 103, 103, 0.14);
+  --warn: #fab219;
+  --warn-soft: rgba(250, 178, 25, 0.12);
+  --good-text: #0ca30c;
+  --shadow: none;
+}
+
 
 /* ---------- Base ---------- */
 *,
@@ -1878,6 +1904,23 @@ dialog.sheet::backdrop {
 .budget-strip .budget-state .icon {
   width: 16px;
   height: 16px;
+}
+
+.budget-strip-balance {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.budget-strip-balance strong {
+  color: var(--text);
+}
+
+.budget-strip-balance strong.income {
+  color: var(--good-text);
 }
 
 .budget-link {

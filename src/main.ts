@@ -1,6 +1,6 @@
 import './styles.css';
 import { completeRedirect, createDriver, getAccount, isConfigured, login, tokenGetter, type Account, type Provider } from './auth/session';
-import { defaultCategories, onThemeChange } from './defaults';
+import { defaultCategories } from './defaults';
 import { AuthError } from './drivers/http';
 import { html, type SafeHtml } from './html';
 import { lang, LANGS, setLang, t, type Lang } from './i18n';
@@ -12,7 +12,10 @@ import { mountExpenses } from './pages/expenses';
 import { initials, openSettings } from './pages/settings';
 import { ensureRatesFor } from './rates';
 import { store } from './store';
+import { applyTheme, onThemeChange } from './theme';
 import { $, openExpenseActions } from './ui';
+
+applyTheme();
 
 const app = $('#app');
 /** Set while a silent sign-in redirect is in flight, so a failure can't loop. */
