@@ -480,6 +480,10 @@ textarea {
   cursor: pointer;
 }
 
+.sync-btn.ok {
+  color: var(--good-text);
+}
+
 .sync-btn.warn {
   color: var(--warn);
 }

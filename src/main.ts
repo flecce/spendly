@@ -127,7 +127,7 @@ function renderSync(): void {
             ? ['alert', t('syncError'), 'warn']
             : n
               ? ['cloudOff', t('pending', { n }), 'warn']
-              : ['cloud', t('synced'), ''];
+              : ['cloud', t('synced'), store.ready ? 'ok' : ''];
   btn.className = `sync-btn ${cls}`;
   btn.title = label;
   btn.setAttribute('aria-label', n ? `${label} (${t('pending', { n })})` : label);
