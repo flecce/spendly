@@ -10,7 +10,7 @@ Lingue: italiano, inglese, spagnolo, francese, tedesco (rilevata dal browser, mo
 
 ## Funzionalità
 
-- **Aggiungi**: nota, totale (con valuta) e categoria. La categoria viene **riconosciuta dalla nota**: parole chiave multilingua (modificabili) + apprendimento dalle spese già inserite (una nota già usata ritrova la sua categoria). Data con scorciatoie *Oggi / Ieri* e calendario.
+- **Aggiungi**: nota, totale (con valuta) e categoria. La categoria viene **riconosciuta dalla nota**: parole chiave nella tua lingua, più i marchi che valgono ovunque (Lidl, Netflix, Ryanair…), tutte modificabili + apprendimento dalle spese già inserite (una nota già usata ritrova la sua categoria). Data con scorciatoie *Oggi / Ieri* e calendario.
 - **Valute**: ogni spesa ha la sua valuta (EUR, USD, GBP, CHF, JPY e le altre ~30 con cambio BCE). I totali sono convertiti nella *valuta principale* al cambio BCE del giorno della spesa ([frankfurter.dev](https://frankfurter.dev), gratuito, senza chiave). I cambi sono salvati in cache per l'uso offline.
 - **Entrate**: ogni movimento può essere segnato come uscita o entrata. Le entrate non consumano il budget e nelle statistiche compaiono a parte, con il saldo del periodo.
 - **Spese divise**: un importo si può ripartire fra più categorie (es. 100 € = 60 € Spesa + 40 € Casa). Ogni parte è una riga con la sua categoria, e le righe restano collegate dalla colonna `Group`.
@@ -20,7 +20,7 @@ Lingue: italiano, inglese, spagnolo, francese, tedesco (rilevata dal browser, mo
   - **Andamento** raggruppato per giorno, settimana o mese: fino a due settimane è giornaliero, fino a quattro mesi settimanale, oltre mensile. Il raggruppamento si può cambiare a mano.
   - **Filtro per categoria** che vale su tutto: totale, grafico ed elenco. Si sceglie dal menu o toccando una categoria nella ripartizione.
   - Elenco delle spese raggruppate per giorno.
-- **Categorie**: crea, rinomina (aggiorna anche le spese esistenti), icona, colore, parole chiave, elimina.
+- **Categorie**: crea, rinomina (aggiorna anche le spese esistenti), icona, colore, parole chiave, elimina. Cambiando lingua le categorie standard e le loro parole chiave possono essere aggiornate con un tocco.
 - **Veloce**: ~40 KB gzip, nessuna dipendenza runtime. Le modifiche sono applicate subito e sincronizzate in background con una coda persistente: funziona anche offline e riprova da sola.
 
 ## Formato del file

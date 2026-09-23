@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { detectCategory, learn } from '../src/categorize';
-import { defaultCategories } from '../src/defaults';
+import { defaultCategories, hasForeignKeywords, keywordsInLanguage } from '../src/defaults';
 import { crc32, buildXlsx, Style } from '../src/drivers/xlsx';
 import { isoToSerial, mainCurrency, parseAmount, serialToIso, toIsoDate } from '../src/format';
 import { setRatesForTest, toMain } from '../src/rates';
@@ -96,6 +96,34 @@ describe('schema', () => {
   });
 });
 
+describe('category keywords', () => {
+  it('moves a standard category to another language, keeping what the user added', () => {
+    const groceries = defaultCategories('it')[0];
+    const next = keywordsInLanguage(groceries.name, 'de', [...groceries.keywords, 'panetteria di Luca'])!;
+    expect(next).toContain('supermarkt');
+    expect(next).toContain('lidl'); // proper nouns stay
+    expect(next).not.toContain('supermercato'); // the Italian words go
+    expect(next).toContain('panetteria di Luca'); // anything hand-written stays
+  });
+
+  it('still recognises a standard category the user renamed', () => {
+    const eatingOut = defaultCategories('it')[1];
+    expect(keywordsInLanguage('Ristoranti', 'it', eatingOut.keywords)).toContain('trattoria');
+  });
+
+  it('leaves categories of the user alone', () => {
+    expect(keywordsInLanguage('Barca', 'it', ['ormeggio', 'porto', 'vela', 'gasolio', 'bar', 'cena'])).toBeNull();
+    expect(hasForeignKeywords({ name: 'Barca', icon: '⛵', color: '#898781', keywords: ['ormeggio'] }, 'it')).toBe(false);
+  });
+
+  it('flags a standard category holding another language', () => {
+    const [de] = defaultCategories('de');
+    const [it] = defaultCategories('it');
+    expect(hasForeignKeywords({ ...it, keywords: de.keywords }, 'it')).toBe(true);
+    expect(hasForeignKeywords(it, 'it')).toBe(false);
+  });
+});
+
 describe('detectCategory', () => {
   const it_ = defaultCategories('it');
   const name = (i: number) => it_[i].name;
@@ -117,10 +145,26 @@ describe('detectCategory', () => {
     ['Amazon Prime', 6],
     ['Volo Ryanair', 7],
     ['Hôtel à Paris', 7],
-    ['Supermarché', 0],
-    ['Tankstelle', 2],
     ['Farmacía', 4],
   ])('%s', (note, idx) => expect(detectCategory(note, it_, empty)).toBe(name(idx)));
+
+  it('uses the words of the chosen language only', () => {
+    const fr = defaultCategories('fr');
+    const de = defaultCategories('de');
+    expect(detectCategory('Supermarché', fr, empty)).toBe(fr[0].name);
+    expect(detectCategory('Tankstelle', de, empty)).toBe(de[2].name);
+    expect(detectCategory('Tankstelle', it_, empty)).toBeNull();
+    expect(detectCategory('spesa settimanale', de, empty)).toBeNull();
+  });
+
+  it('matches proper nouns whatever the language', () => {
+    for (const code of ['en', 'it', 'es', 'fr', 'de'] as const) {
+      const cats = defaultCategories(code);
+      expect(detectCategory('Lidl', cats, empty)).toBe(cats[0].name);
+      expect(detectCategory('Netflix', cats, empty)).toBe(cats[6].name);
+      expect(detectCategory('Volo Ryanair', cats, empty)).toBe(cats[7].name);
+    }
+  });
 
   it('does not match short keywords inside other words', () => {
     expect(detectCategory('barbiere', it_, empty)).toBe(name(4));

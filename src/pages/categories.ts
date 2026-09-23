@@ -1,7 +1,7 @@
-import { EMOJIS, PALETTE, themedColor } from '../defaults';
+import { EMOJIS, hasForeignKeywords, keywordsInLanguage, PALETTE, themedColor } from '../defaults';
 import { amountInputValue, mainCurrency, money, parseAmount, today } from '../format';
 import { html } from '../html';
-import { countLabel, t } from '../i18n';
+import { countLabel, lang, LANGS, t } from '../i18n';
 import { icon } from '../icons';
 import { splitKeywords } from '../schema';
 import { store } from '../store';
@@ -22,6 +22,9 @@ function openEditor(name: string | null): void {
   const budget = cat ? store.budgetFor(today().slice(0, 7), cat.name) : null;
   const used = new Set(store.categories.map((c) => c.color.toLowerCase()));
   const color = cat?.color ?? PALETTE.find(([light]) => !used.has(light))?.[0] ?? PALETTE[0][0];
+
+  // Standard categories can drop the keywords of the other languages and keep the ones of this one.
+  const canRetune = cat ? keywordsInLanguage(cat.name, lang, cat.keywords) !== null : false;
 
   const dialog = openSheet(html`
     <form class="sheet-body cat-form" novalidate>
@@ -64,7 +67,9 @@ function openEditor(name: string | null): void {
         <span class="hint">${t('categoryBudgetHint')}</span>
       </label>
       <label class="field">
-        <span class="label">${t('keywords')}</span>
+        <span class="label">${t('keywords')}
+          ${canRetune ? html`<button type="button" class="label-action" data-action="keywords-default">${t('defaultKeywords')}</button>` : ''}
+        </span>
         <textarea name="keywords" rows="3" placeholder="${t('keywordsHint')}">${cat?.keywords.join(', ') ?? ''}</textarea>
         <span class="hint">${t('keywordsHint')}</span>
       </label>
@@ -81,6 +86,7 @@ function openEditor(name: string | null): void {
   const nameInput = $<HTMLInputElement>('[name=name]', form);
   const iconInput = $<HTMLInputElement>('[name=icon]', form);
   const nameError = $('#name-error', form);
+  const keywordsInput = $<HTMLTextAreaElement>('[name=keywords]', form);
   if (!cat) nameInput.focus();
 
   form.addEventListener('click', async (e) => {
@@ -89,6 +95,10 @@ function openEditor(name: string | null): void {
     if (emoji) iconInput.value = emoji;
     const action = target.closest<HTMLElement>('[data-action]')?.dataset.action;
     if (action === 'close') dialog.close();
+    if (action === 'keywords-default' && cat) {
+      // Keeps whatever the user added, drops the words of the other languages.
+      keywordsInput.value = (keywordsInLanguage(cat.name, lang, splitKeywords(keywordsInput.value)) ?? []).join(', ');
+    }
     if (action === 'delete' && cat && (await confirmDialog(t('confirmDeleteCategory', { name: cat.name }), t('delete')))) {
       store.deleteCategory(cat.name);
       toast(t('deleted'));
@@ -125,6 +135,15 @@ function openEditor(name: string | null): void {
   });
 }
 
+/** Rewrites the standard categories' keywords in the current language, keeping the user's own additions. */
+function useCurrentLanguageKeywords(): void {
+  for (const c of [...store.categories]) {
+    const keywords = keywordsInLanguage(c.name, lang, c.keywords);
+    if (keywords && keywords.join(',') !== c.keywords.join(',')) store.saveCategory(c.name, { ...c, keywords });
+  }
+  toast(t('keywordsUpdated'));
+}
+
 export function mountCategories(view: HTMLElement): () => void {
   function render(): void {
     const counts = new Map<string, number>();
@@ -137,6 +156,12 @@ export function mountCategories(view: HTMLElement): () => void {
         <button type="button" class="btn primary small" data-action="new">${icon('plus')}${t('newCategory')}</button>
       </div>
       <p class="hint page-hint">${t('categoriesHint')}</p>
+      ${store.categories.some((c) => hasForeignKeywords(c, lang))
+        ? html`<div class="notice keywords-notice">
+            ${icon('alert')}<span>${t('keywordsMixed')}</span>
+            <button type="button" class="btn small" data-action="retune">${t('useLanguageKeywords', { lang: LANGS[lang] })}</button>
+          </div>`
+        : ''}
       ${store.categories.length
         ? html`<ul class="list card">
             ${store.categories.map((c) => {
@@ -164,6 +189,7 @@ export function mountCategories(view: HTMLElement): () => void {
   function onClick(e: Event): void {
     const target = e.target as Element;
     if (target.closest('[data-action=new]')) return openEditor(null);
+    if (target.closest('[data-action=retune]')) return useCurrentLanguageKeywords();
     const row = target.closest<HTMLElement>('[data-name]');
     if (row) openEditor(row.dataset.name!);
   }

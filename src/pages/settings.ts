@@ -1,6 +1,6 @@
 import { logout, type Account, type Provider } from '../auth/session';
 import { openBudgetEditor } from '../budget';
-import { seedNameFor } from '../defaults';
+import { keywordsInLanguage, seedNameFor } from '../defaults';
 import { CURRENCIES, currencyName, mainCurrency, money, setMainCurrency } from '../format';
 import { html } from '../html';
 import { lang, LANGS, setLang, t, type Lang } from '../i18n';
@@ -16,15 +16,22 @@ export const initials = (a: Account): string =>
   (a.name || a.email || '?').split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?';
 
 /** Settings sheet: account, language, currency, sync, sign out. `onPrefsChange` re-renders the app. */
-/** The standard categories sit in the file in one language: offer to move them to the new one. */
+/** The standard categories sit in the file in one language: offer to move them, keywords included, to the new one. */
 async function offerCategoryTranslation(lang: Lang): Promise<void> {
   const taken = new Set(store.categories.map((c) => c.name));
   const todo = store.categories
-    .map((category) => ({ category, name: seedNameFor(category.name, lang) }))
-    .filter((x) => x.name && x.name !== x.category.name && !taken.has(x.name));
+    .map((category) => {
+      // A category the user renamed keeps its name, but its keywords still follow the language.
+      const seeded = seedNameFor(category.name, lang);
+      const name = seeded && seeded !== category.name && !taken.has(seeded) ? seeded : category.name;
+      const keywords = keywordsInLanguage(category.name, lang, category.keywords) ?? category.keywords;
+      const changed = name !== category.name || keywords.join(',') !== category.keywords.join(',');
+      return changed ? { category, name, keywords } : null;
+    })
+    .filter((x) => x !== null);
   if (!todo.length) return;
   if (!(await confirmDialog(t('translateCategoriesAsk', { lang: LANGS[lang] }), t('translate')))) return;
-  for (const { category, name } of todo) store.saveCategory(category.name, { ...category, name: name! });
+  for (const { category, name, keywords } of todo) store.saveCategory(category.name, { ...category, name, keywords });
   toast(t('categoriesTranslated'));
 }
 

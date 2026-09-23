@@ -223,6 +223,19 @@ textarea {
   color: var(--text-2);
 }
 
+/* Secondary action sitting at the end of a field label ("Keywords — Defaults"). */
+.label-action {
+  margin-inline-start: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .field-error {
   color: var(--danger);
   font-size: 13px;
@@ -1469,6 +1482,21 @@ dialog.sheet::backdrop {
   width: 16px;
   height: 16px;
   margin-top: 1px;
+}
+
+.keywords-notice {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 10px;
+}
+
+.keywords-notice span {
+  flex: 1 1 200px;
+}
+
+.keywords-notice .btn {
+  margin-inline-start: auto;
 }
 
 .chart-card h2,
