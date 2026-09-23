@@ -4,7 +4,6 @@ Web app mobile-first per segnare le spese in pochi secondi. Non c'è un backend:
 
 - **Google** → foglio Google Sheets `Spendly` nel Drive dell'utente
 - **Microsoft** → file Excel `Spendly.xlsx` nella radice di OneDrive
-- **Senza account** → dati solo nel browser (utile per provare)
 
 Lingue: italiano, inglese, spagnolo, francese, tedesco (rilevata dal browser, modificabile nelle impostazioni).
 
@@ -80,4 +79,4 @@ Il workflow `.github/workflows/deploy.yml` esegue test e build e pubblica il sit
   - Google: flusso OAuth per app client-side; il token dura 1 ora, poi l'app lo rinnova con un redirect silenzioso.
   - Microsoft: codice di autorizzazione + PKCE, con refresh token.
 - Il token resta nel `localStorage` del browser e va solo a Google/Microsoft; l'app non ha server propri.
-- Codice: `src/drivers/` (Google Sheets, Excel via Microsoft Graph, locale), `src/store.ts` (stato + coda di sincronizzazione), `src/categorize.ts` (riconoscimento categoria), `src/rates.ts` (cambi), `src/budget.ts` (budget e stato del mese), `src/pages/` (schermate).
+- Codice: `src/drivers/` (Google Sheets, Excel via Microsoft Graph), `src/store.ts` (stato + coda di sincronizzazione), `src/categorize.ts` (riconoscimento categoria), `src/rates.ts` (cambi), `src/budget.ts` (budget e stato del mese), `src/pages/` (schermate).

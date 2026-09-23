@@ -9,8 +9,8 @@ import { ensureRatesFor } from '../rates';
 import { store } from '../store';
 import { $, confirmDialog, openSheet, toast } from '../ui';
 
-const PROVIDER_NAME: Record<Provider, string> = { google: 'Google', microsoft: 'Microsoft', local: '' };
-const APP_NAME: Record<Provider, string> = { google: 'Google Sheets', microsoft: 'Excel', local: '' };
+const PROVIDER_NAME: Record<Provider, string> = { google: 'Google', microsoft: 'Microsoft' };
+const APP_NAME: Record<Provider, string> = { google: 'Google Sheets', microsoft: 'Excel' };
 
 export const initials = (a: Account): string =>
   (a.name || a.email || '?').split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?';
@@ -36,7 +36,6 @@ async function offerCategoryTranslation(lang: Lang): Promise<void> {
 }
 
 export function openSettings(account: Account, onPrefsChange: () => void): void {
-  const local = account.provider === 'local';
   const pending = store.queue.length;
   const dialog = openSheet(html`
     <div class="sheet-body settings">
@@ -46,12 +45,10 @@ export function openSettings(account: Account, onPrefsChange: () => void): void 
       </div>
 
       <div class="account">
-        <span class="avatar-lg" aria-hidden="true">${local ? icon('wallet') : initials(account)}</span>
+        <span class="avatar-lg" aria-hidden="true">${initials(account)}</span>
         <div>
-          ${local
-            ? html`<strong>${t('localMode')}</strong>`
-            : html`<strong>${account.name}</strong><span>${account.email}</span>
-                <span class="muted">${t('signedInWith', { provider: PROVIDER_NAME[account.provider] })}</span>`}
+          <strong>${account.name}</strong><span>${account.email}</span>
+          <span class="muted">${t('signedInWith', { provider: PROVIDER_NAME[account.provider] })}</span>
         </div>
       </div>
 
@@ -76,18 +73,16 @@ export function openSettings(account: Account, onPrefsChange: () => void): void 
         <span class="muted">${store.budget ? money(store.budget.amount, store.budget.currency) : t('setBudget')}</span>
       </button>
 
-      ${local
-        ? ''
-        : html`<div class="settings-links">
-            ${store.fileUrl
-              ? html`<a class="btn ghost block" href="${store.fileUrl}" target="_blank" rel="noopener">
-                  ${icon('external')}${t('openIn', { app: APP_NAME[account.provider] })}</a>`
-              : ''}
-            <button type="button" class="btn ghost block" data-action="sync">
-              ${icon('refresh')}${t('syncNow')}
-              <span class="muted">${pending ? t('pending', { n: pending }) : store.sync === 'idle' ? t('synced') : ''}</span>
-            </button>
-          </div>`}
+      <div class="settings-links">
+        ${store.fileUrl
+          ? html`<a class="btn ghost block" href="${store.fileUrl}" target="_blank" rel="noopener">
+              ${icon('external')}${t('openIn', { app: APP_NAME[account.provider] })}</a>`
+          : ''}
+        <button type="button" class="btn ghost block" data-action="sync">
+          ${icon('refresh')}${t('syncNow')}
+          <span class="muted">${pending ? t('pending', { n: pending }) : store.sync === 'idle' ? t('synced') : ''}</span>
+        </button>
+      </div>
 
       <button type="button" class="btn ghost block danger-text" data-action="logout">${icon('logout')}${t('logout')}</button>
     </div>
@@ -122,7 +117,7 @@ export function openSettings(account: Account, onPrefsChange: () => void): void 
       void store.retry();
     }
     if (action === 'logout') {
-      if (store.queue.length && !local && !(await confirmDialog(t('unsyncedLogout'), t('logout')))) return;
+      if (store.queue.length && !(await confirmDialog(t('unsyncedLogout'), t('logout')))) return;
       logout();
       location.hash = '';
       location.reload();

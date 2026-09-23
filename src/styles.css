@@ -814,25 +814,6 @@ dialog.sheet::backdrop {
   cursor: not-allowed;
 }
 
-.link-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 12px;
-  border: 0;
-  background: none;
-  color: var(--accent-text);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.link-btn small {
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 400;
-}
-
 .fineprint {
   margin: 0;
   color: var(--muted);

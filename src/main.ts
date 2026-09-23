@@ -1,5 +1,5 @@
 import './styles.css';
-import { completeRedirect, createDriver, getAccount, isConfigured, login, setAccount, tokenGetter, type Account } from './auth/session';
+import { completeRedirect, createDriver, getAccount, isConfigured, login, tokenGetter, type Account, type Provider } from './auth/session';
 import { defaultCategories, onThemeChange } from './defaults';
 import { AuthError } from './drivers/http';
 import { html, type SafeHtml } from './html';
@@ -24,7 +24,7 @@ let shownReady = false;
 
 // ---- Login ----
 
-function providerButton(p: 'google' | 'microsoft', logo: SafeHtml, label: string, hint: string): SafeHtml {
+function providerButton(p: Provider, logo: SafeHtml, label: string, hint: string): SafeHtml {
   const ok = isConfigured(p);
   return html`<button type="button" class="provider" data-provider="${p}" ${ok ? '' : html`disabled`}>
     ${logo}<span><strong>${label}</strong><small>${ok ? hint : t('notConfigured')}</small></span>
@@ -45,7 +45,6 @@ function renderLogin(error: string | null): void {
           ${providerButton('google', googleLogo, t('loginGoogle'), t('loginGoogleHint'))}
           ${providerButton('microsoft', microsoftLogo, t('loginMicrosoft'), t('loginMicrosoftHint'))}
         </div>
-        <button type="button" class="link-btn" data-provider="local">${t('loginLocal')}<small>${t('loginLocalHint')}</small></button>
         <p class="fineprint">${t('privacyNote')}</p>
         <label class="lang-select">
           <span class="sr-only">${t('language')}</span>
@@ -61,11 +60,7 @@ function renderLogin(error: string | null): void {
   });
   page.addEventListener('click', (e) => {
     const p = (e.target as Element).closest<HTMLElement>('[data-provider]')?.dataset.provider;
-    if (!p) return;
-    if (p === 'local') {
-      setAccount({ provider: 'local', email: 'local', name: '' });
-      start(getAccount()!, null);
-    } else login(p as 'google' | 'microsoft');
+    if (p) login(p as Provider);
   });
 }
 
@@ -87,9 +82,7 @@ function renderShell(): void {
           ${TABS.map(([route, ic, label]) => html`<a href="#/${route}" data-route="${route}">${icon(ic)}<span>${label()}</span></a>`)}
         </nav>
         <button type="button" class="sync-btn" id="sync"></button>
-        <button type="button" class="avatar-btn" id="me" aria-label="${t('settings')}">
-          ${account.provider === 'local' ? icon('wallet') : initials(account)}
-        </button>
+        <button type="button" class="avatar-btn" id="me" aria-label="${t('settings')}">${initials(account)}</button>
       </div>
     </header>
     <div id="banner"></div>
@@ -112,17 +105,13 @@ function rerender(): void {
 }
 
 function reconnect(): void {
-  if (account.provider !== 'local') login(account.provider, { hint: account.email });
+  login(account.provider, { hint: account.email });
 }
 
 function renderSync(): void {
   const btn = $('#sync');
   const banner = $('#banner');
   if (!btn) return;
-  if (account.provider === 'local') {
-    btn.hidden = true;
-    return;
-  }
   const n = store.queue.length;
   const [ic, label, cls]: [IconName, string, string] =
     store.sync === 'syncing'
@@ -193,7 +182,6 @@ function route(): void {
  * Returns false when the page is navigating away.
  */
 async function ensureToken(redirectError: string | null): Promise<boolean> {
-  if (account.provider === 'local') return true;
   try {
     await tokenGetter(account.provider)();
     sessionStorage.removeItem(SILENT_KEY);
