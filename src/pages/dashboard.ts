@@ -6,6 +6,7 @@ import { countLabel, t, type Key } from '../i18n';
 import { icon } from '../icons';
 import { onRatesChange, toMain } from '../rates';
 import { sortByDateDesc, type Expense } from '../schema';
+import { openSankey } from '../sankey';
 import { store } from '../store';
 import { $, categoryBadge, categoryLabel, dayLabel, expenseRow } from '../ui';
 
@@ -161,6 +162,8 @@ function chartSvg(bs: Bucket[], width: number): string {
 
 export function mountDashboard(view: HTMLElement): () => void {
   let resizeObserver: ResizeObserver | null = null;
+  /** The period's entries in the main currency, for the income/spending flow. */
+  let flowOf: () => void = () => {};
 
   /** One category row: share of the period and, for a single month, how it sits against its budget. */
   function categoryBar(name: string, c: { total: number; count: number }, maxCat: number, catTotal: number, monthDay: string | null): SafeHtml {
@@ -207,6 +210,8 @@ export function mountDashboard(view: HTMLElement): () => void {
     const value = (e: Expense) => converted.get(e) ?? 0;
     const known = inPeriod.filter((e) => converted.has(e));
     const missing = inPeriod.length - known.length;
+    // The flow shows the whole period, whatever the category filter.
+    flowOf = () => openSankey(known.map((e) => [e, value(e)]), from, to);
 
     // The category filter scopes the figures, the chart and the list; the breakdown below stays
     // whole, so it doubles as the category picker.
@@ -275,6 +280,9 @@ export function mountDashboard(view: HTMLElement): () => void {
                     <div><span class="label">${t('balance')}</span><strong class="${incomeTotal - total >= 0 ? 'income' : ''}">${money(incomeTotal - total)}</strong></div>`
                 : ''}
             </div>
+            ${known.length
+              ? html`<button type="button" class="btn ghost small flow-btn" data-action="flow">${icon('split')}${t('flowTitle')}</button>`
+              : ''}
             ${missing ? html`<p class="notice">${icon('alert')}<span>${t('notConverted', { n: missing })}</span></p>` : ''}
           </section>
           <section class="card chart-card">
@@ -396,6 +404,7 @@ export function mountDashboard(view: HTMLElement): () => void {
   function onClick(e: Event): void {
     const target = e.target as Element;
     if (target.closest('[data-action=budget]')) return openBudgetEditor();
+    if (target.closest('[data-action=flow]')) return flowOf();
     const presetBtn = target.closest<HTMLElement>('[data-preset]');
     if (presetBtn) {
       preset = presetBtn.dataset.preset as Preset;

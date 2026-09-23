@@ -1477,6 +1477,62 @@ dialog.sheet::backdrop {
   font-weight: 700;
 }
 
+.flow-btn {
+  align-self: flex-start;
+  margin: 12px 0 0 -12px;
+  color: var(--accent-text);
+}
+
+/* ---------- Income/spending flow (sankey) ---------- */
+.sankey-stats {
+  grid-template-columns: repeat(3, 1fr);
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.sankey-box {
+  width: 100%;
+}
+
+.sankey {
+  display: block;
+  overflow: visible;
+}
+
+.sankey-link {
+  fill: var(--c);
+  fill-opacity: 0.3;
+  transition: fill-opacity 0.15s;
+}
+
+.sankey-link:hover {
+  fill-opacity: 0.55;
+}
+
+.sankey-node {
+  fill: var(--c);
+}
+
+.sankey-pot {
+  fill: var(--text-2);
+}
+
+.sankey-label {
+  fill: var(--text);
+  font-size: 12px;
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.sankey-amount {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 .notice {
   display: flex;
   align-items: flex-start;
