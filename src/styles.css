@@ -1784,6 +1784,26 @@ dialog.sheet::backdrop {
   font-size: 14px;
 }
 
+.budget-balance {
+  display: flex;
+  gap: 24px;
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.budget-balance dt {
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.budget-balance dd {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 .budget-cta {
   display: flex;
   align-items: center;

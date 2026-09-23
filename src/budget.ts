@@ -19,6 +19,8 @@ export interface BudgetStatus {
   month: string; // YYYY-MM
   budget: number; // in the main currency
   spent: number;
+  /** Income of the month (0 for a category budget): with `spent`, the month's balance. */
+  income: number;
   remaining: number;
   /** spent / budget */
   ratio: number;
@@ -47,9 +49,14 @@ export function budgetStatus(expenses: Expense[], budget: Budget, day = today(),
   const daysInMonth = new Date(y, m, 0).getDate();
   const amount = toMain(budget.amount, budget.currency, day) ?? budget.amount;
   let spent = 0;
+  let income = 0;
   for (const e of expenses) {
-    const counts = isSpending(e) && e.date.startsWith(month) && (!category || e.category === category);
-    if (counts) spent += toMain(e.amount, e.currency, e.date) ?? 0;
+    if (!e.date.startsWith(month)) continue;
+    if (!isSpending(e)) {
+      if (!category) income += toMain(e.amount, e.currency, e.date) ?? 0;
+    } else if (!category || e.category === category) {
+      spent += toMain(e.amount, e.currency, e.date) ?? 0;
+    }
   }
   const pace = d / daysInMonth;
   const remaining = amount - spent;
@@ -59,6 +66,7 @@ export function budgetStatus(expenses: Expense[], budget: Budget, day = today(),
     month,
     budget: amount,
     spent,
+    income,
     remaining,
     ratio,
     pace,
@@ -154,6 +162,12 @@ export function budgetCard(s: BudgetStatus | null): SafeHtml {
     <p class="budget-state">${icon(STATE_ICON[s.state])}<strong>${stateLabel(s)}</strong></p>
     ${leftLabel(s) ? html`<p class="budget-detail">${leftLabel(s)}</p>` : ''}
     ${s.state !== 'ok' ? html`<p class="budget-detail">${t('budgetProjection', { x: money(s.projected) })}</p>` : ''}
+    ${s.income > 0
+      ? html`<dl class="budget-balance">
+          <div><dt>${t('income')}</dt><dd class="income">${money(s.income)}</dd></div>
+          <div><dt>${t('balance')}</dt><dd class="${s.income - s.spent >= 0 ? 'income' : ''}">${money(s.income - s.spent)}</dd></div>
+        </dl>`
+      : ''}
   </section>`;
 }
 

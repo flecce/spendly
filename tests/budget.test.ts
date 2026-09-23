@@ -70,6 +70,7 @@ describe('budgetStatus with income and categories', () => {
     const list = [exp('2026-09-05', 300), exp('2026-09-06', 2000, { type: 'income' })];
     const s = budgetStatus(list, budget(1000), '2026-09-10');
     expect(s.spent).toBe(300);
+    expect(s.income).toBe(2000);
     expect(s.state).toBe('ok');
   });
 
