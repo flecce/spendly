@@ -5,6 +5,7 @@ import { CURRENCIES, currencyName, mainCurrency, money, setMainCurrency } from '
 import { html } from '../html';
 import { lang, LANGS, setLang, t, type Lang } from '../i18n';
 import { icon } from '../icons';
+import { canOfferInstall, isIos, promptInstall } from '../install';
 import { ensureRatesFor } from '../rates';
 import { store } from '../store';
 import { setTheme, theme, THEMES, type Theme } from '../theme';
@@ -35,6 +36,20 @@ async function offerCategoryTranslation(lang: Lang): Promise<void> {
   if (!(await confirmDialog(t('translateCategoriesAsk', { lang: LANGS[lang] }), t('translate')))) return;
   for (const { category, name, keywords } of todo) store.saveCategory(category.name, { ...category, name, keywords });
   toast(t('categoriesTranslated'));
+}
+
+/** No install prompt from the browser (always the case on iOS): explain the manual steps. */
+function openInstallHelp(): void {
+  const dialog = openSheet(html`
+    <div class="sheet-body">
+      <div class="sheet-head">
+        <h2>${t('installTitle')}</h2>
+        <button type="button" class="icon-btn" data-action="close" aria-label="${t('close')}">${icon('x')}</button>
+      </div>
+      <p>${isIos ? t('installIos') : t('installManual')}</p>
+    </div>
+  `);
+  $('[data-action=close]', dialog).addEventListener('click', () => dialog.close());
 }
 
 export function openSettings(account: Account, onPrefsChange: () => void): void {
@@ -83,6 +98,9 @@ export function openSettings(account: Account, onPrefsChange: () => void): void 
       </button>
 
       <div class="settings-links">
+        ${canOfferInstall()
+          ? html`<button type="button" class="btn ghost block" data-action="install">${icon('download')}${t('installApp')}</button>`
+          : ''}
         ${store.fileUrl
           ? html`<a class="btn ghost block" href="${store.fileUrl}" target="_blank" rel="noopener">
               ${icon('external')}${t('openIn', { app: APP_NAME[account.provider] })}</a>`
@@ -128,6 +146,10 @@ export function openSettings(account: Account, onPrefsChange: () => void): void 
     if (action === 'sync') {
       dialog.close();
       void store.retry();
+    }
+    if (action === 'install') {
+      dialog.close();
+      if (!(await promptInstall())) openInstallHelp();
     }
     if (action === 'logout') {
       if (store.queue.length && !(await confirmDialog(t('unsyncedLogout'), t('logout')))) return;

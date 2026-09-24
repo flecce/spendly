@@ -9,6 +9,7 @@ import { mountAdd } from './pages/add';
 import { mountCategories } from './pages/categories';
 import { mountDashboard } from './pages/dashboard';
 import { mountExpenses } from './pages/expenses';
+import './install';
 import { initials, openSettings } from './pages/settings';
 import { ensureRatesFor } from './rates';
 import { store } from './store';
