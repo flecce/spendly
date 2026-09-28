@@ -1,5 +1,6 @@
 import { cacheKey, type Account } from './auth/session';
 import { readJson } from './auth/util';
+import type { Data } from './backup';
 import { learn, type Model } from './categorize';
 import { AuthError, HttpError } from './drivers/http';
 import type { Driver } from './drivers/types';
@@ -13,6 +14,7 @@ import {
   rowsToBudgets,
   rowsToCategories,
   rowsToExpenses,
+  rowIds,
   rowsToSettings,
   settingsToRows,
   splitKeywords,
@@ -32,6 +34,7 @@ import {
 
 type Op =
   | { t: 'add'; row: Row; tried?: boolean }
+  | { t: 'import'; rows: Row[]; tried?: boolean }
   | { t: 'upsert'; id: string; row: Row }
   | { t: 'delete'; id: string }
   | { t: 'categories'; rows: Row[] }
@@ -209,7 +212,7 @@ class Store {
         if (e instanceof HttpError && e.status === 400) {
           console.error('Dropping change rejected by the server', op, e);
         } else {
-          if (op.t === 'add') op.tried = true;
+          if (op.t === 'add' || op.t === 'import') op.tried = true;
           this.persist();
           return this.fail(e);
         }
@@ -226,6 +229,12 @@ class Store {
       case 'add':
         // If a previous attempt may have reached the server, don't append a duplicate.
         return op.tried ? d.upsertExpense(String(op.row[COL.id]), op.row) : d.appendExpense(op.row);
+      case 'import': {
+        if (!op.tried) return d.appendExpenses(op.rows);
+        // A previous attempt may have written part of the rows: add only the missing ones.
+        const present = new Set(rowIds((await d.read()).expenses));
+        return d.appendExpenses(op.rows.filter((r) => !present.has(String(r[COL.id]))));
+      }
       case 'upsert':
         return d.upsertExpense(op.id, op.row);
       case 'delete':
@@ -372,6 +381,35 @@ class Store {
       this.settings = rest;
       this.enqueue({ t: 'settings', rows: settingsToRows(this.settings) });
     }
+  }
+
+  /** Everything the store holds, e.g. to export it. */
+  get data(): Data {
+    return { expenses: this.expenses, categories: this.categories, budgets: this.budgets, settings: this.settings };
+  }
+
+  /** Adds what comes from a backup (see newInBackup: only what isn't here yet). */
+  importData(d: Data): void {
+    if (d.expenses.length) {
+      this.expenses.push(...d.expenses);
+      this.queue.push({ t: 'import', rows: d.expenses.map(expenseToRow) });
+    }
+    if (d.categories.length) {
+      this.categories = [...this.categories, ...d.categories];
+      this.queue.push({ t: 'categories', rows: this.categories.map(categoryToRow) });
+    }
+    if (d.budgets.length) {
+      this.budgets = [...this.budgets, ...d.budgets].sort(
+        (a, b) => a.month.localeCompare(b.month) || a.category.localeCompare(b.category),
+      );
+      this.queue.push({ t: 'budgets', rows: this.budgets.map(budgetToRow) });
+    }
+    if (Object.keys(d.settings).length) {
+      this.settings = { ...this.settings, ...d.settings };
+      this.queue.push({ t: 'settings', rows: settingsToRows(this.settings) });
+    }
+    this.changed();
+    void this.flush();
   }
 
   category(name: string): Category | undefined {

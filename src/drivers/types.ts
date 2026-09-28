@@ -12,6 +12,8 @@ export interface Driver {
   connect(seedCategories: Row[]): Promise<void>;
   read(): Promise<{ expenses: unknown[][]; categories: unknown[][]; budgets: unknown[][]; settings: unknown[][] }>;
   appendExpense(row: Row): Promise<void>;
+  /** Appends many rows at once (used when importing a backup). */
+  appendExpenses(rows: Row[]): Promise<void>;
   /** Updates the row with this id, or appends it when it is not in the sheet (anymore). */
   upsertExpense(id: string, row: Row): Promise<void>;
   /** Deletes the row with this id; no-op when it's already gone. */

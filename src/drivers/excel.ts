@@ -188,15 +188,29 @@ export class ExcelDriver implements Driver {
     });
   }
 
-  private writeExpense(r: number, row: Row) {
+  /** Writes expense rows starting at sheet row r. */
+  private writeExpenses(r: number, rows: Row[]) {
     // Dates go in as serial numbers so Excel stores real dates regardless of locale.
-    const cells = row.map((v, i) => (i === COL.date ? isoToSerial(String(v)) : i === COL.amount ? v : String(v)));
-    return this.write('Expenses', `A${r}:I${r}`, [cells], EXPENSE_FORMATS);
+    const cells = rows.map((row) => row.map((v, i) => (i === COL.date ? isoToSerial(String(v)) : i === COL.amount ? v : String(v))));
+    return this.write('Expenses', `A${r}:I${r + rows.length - 1}`, cells, EXPENSE_FORMATS);
   }
 
-  async appendExpense(row: Row): Promise<void> {
-    const rows = await this.dataRows('Expenses');
-    await this.writeExpense(rows.length + 2, row);
+  private writeExpense(r: number, row: Row) {
+    return this.writeExpenses(r, [row]);
+  }
+
+  appendExpense(row: Row): Promise<void> {
+    return this.appendExpenses([row]);
+  }
+
+  async appendExpenses(rows: Row[]): Promise<void> {
+    let r = (await this.dataRows('Expenses')).length + 2;
+    // Graph requests are capped at a few MB: write large imports in chunks.
+    for (let i = 0; i < rows.length; i += 1000) {
+      const chunk = rows.slice(i, i + 1000);
+      await this.writeExpenses(r, chunk);
+      r += chunk.length;
+    }
   }
 
   async upsertExpense(id: string, row: Row): Promise<void> {

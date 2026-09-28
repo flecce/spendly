@@ -1,4 +1,5 @@
 import { logout, type Account, type Provider } from '../auth/session';
+import { download, fromBackup, isEmpty, newInBackup } from '../backup';
 import { openBudgetEditor } from '../budget';
 import { keywordsInLanguage, seedNameFor } from '../defaults';
 import { CURRENCIES, currencyName, mainCurrency, money, setMainCurrency } from '../format';
@@ -36,6 +37,19 @@ async function offerCategoryTranslation(lang: Lang): Promise<void> {
   if (!(await confirmDialog(t('translateCategoriesAsk', { lang: LANGS[lang] }), t('translate')))) return;
   for (const { category, name, keywords } of todo) store.saveCategory(category.name, { ...category, name, keywords });
   toast(t('categoriesTranslated'));
+}
+
+/** Adds to the current file what a backup (possibly from another account) has and it lacks. */
+async function importBackup(text: string): Promise<void> {
+  const backup = fromBackup(text);
+  if (!backup) return toast(t('importInvalid'), 'error');
+  const add = newInBackup(store.data, backup);
+  if (isEmpty(add)) return toast(t('importNothing'));
+  const counts = { e: add.expenses.length, c: add.categories.length, b: add.budgets.length };
+  if (!(await confirmDialog(t('importAsk', counts), t('importConfirm')))) return;
+  store.importData(add);
+  void ensureRatesFor(store.expenses);
+  toast(t('importDone'));
 }
 
 /** No install prompt from the browser (always the case on iOS): explain the manual steps. */
@@ -109,7 +123,11 @@ export function openSettings(account: Account, onPrefsChange: () => void): void 
           ${icon('refresh')}${t('syncNow')}
           <span class="muted">${pending ? t('pending', { n: pending }) : store.sync === 'idle' ? t('synced') : ''}</span>
         </button>
+        <button type="button" class="btn ghost block" data-action="export">${icon('download')}${t('exportData')}</button>
+        <button type="button" class="btn ghost block" data-action="import">${icon('upload')}${t('importData')}</button>
+        <input type="file" name="backup" accept=".json,application/json" hidden />
       </div>
+      <p class="hint">${t('backupHint')}</p>
 
       <button type="button" class="btn ghost block danger-text" data-action="logout">${icon('logout')}${t('logout')}</button>
     </div>
@@ -136,6 +154,15 @@ export function openSettings(account: Account, onPrefsChange: () => void): void 
     setTheme((e.target as HTMLSelectElement).value as Theme);
   });
 
+  $<HTMLInputElement>('[name=backup]', dialog).addEventListener('change', async (e) => {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    dialog.close();
+    await importBackup(await file.text());
+  });
+
   dialog.addEventListener('click', async (e) => {
     const action = (e.target as Element).closest<HTMLElement>('[data-action]')?.dataset.action;
     if (action === 'close') dialog.close();
@@ -147,6 +174,8 @@ export function openSettings(account: Account, onPrefsChange: () => void): void 
       dialog.close();
       void store.retry();
     }
+    if (action === 'export') download(store.data);
+    if (action === 'import') $<HTMLInputElement>('[name=backup]', dialog).click();
     if (action === 'install') {
       dialog.close();
       if (!(await promptInstall())) openInstallHelp();

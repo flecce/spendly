@@ -20,6 +20,7 @@ Lingue: italiano, inglese, spagnolo, francese, tedesco (rilevata dal browser, mo
   - **Filtro per categoria** che vale su tutto: totale, grafico ed elenco. Si sceglie dal menu o toccando una categoria nella ripartizione.
   - Elenco delle spese raggruppate per giorno.
 - **Categorie**: crea, rinomina (aggiorna anche le spese esistenti), icona, colore, parole chiave, elimina. Cambiando lingua le categorie standard e le loro parole chiave possono essere aggiornate con un tocco.
+- **Esporta / importa**: dalle impostazioni si scarica un file `.json` con movimenti, categorie, budget e preferenze, da importare in un altro account (anche passando da Google a Microsoft o viceversa). L'import aggiunge solo ciò che manca: i movimenti già presenti (stesso ID), le categorie con lo stesso nome e i budget dello stesso mese non vengono toccati, quindi importare due volte lo stesso file non crea doppioni.
 - **Veloce**: ~40 KB gzip, nessuna dipendenza runtime. Le modifiche sono applicate subito e sincronizzate in background con una coda persistente: funziona anche offline e riprova da sola.
 
 ## Formato del file

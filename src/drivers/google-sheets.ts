@@ -155,11 +155,16 @@ export class GoogleSheetsDriver implements Driver {
     return i < 0 ? -1 : i + 2;
   }
 
-  async appendExpense(row: Row): Promise<void> {
+  appendExpense(row: Row): Promise<void> {
+    return this.appendExpenses([row]);
+  }
+
+  async appendExpenses(rows: Row[]): Promise<void> {
+    if (!rows.length) return;
     // RAW keeps notes like "=1+1" or "1/2" as plain text.
     await this.call(this.values('Expenses!A1:I1', ':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS'), {
       method: 'POST',
-      body: JSON.stringify({ values: [row] }),
+      body: JSON.stringify({ values: rows }),
     });
   }
 
