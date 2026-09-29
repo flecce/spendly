@@ -18,7 +18,7 @@ export type FlowKind = 'income' | 'spend' | 'saved' | 'shortfall' | 'other';
 
 export interface FlowNode {
   kind: FlowKind;
-  /** Category name ('' = uncategorized); empty for the synthetic nodes. */
+  /** Category ID ('' = uncategorized); empty for the synthetic nodes. */
   name: string;
   value: number;
 }
@@ -76,7 +76,7 @@ function nodeLabel(n: FlowNode): string {
   if (n.kind === 'shortfall') return t('shortfall');
   if (n.kind === 'other') return t('other');
   const c = n.name ? store.category(n.name) : undefined;
-  const name = n.name ? n.name : n.kind === 'income' ? t('income') : categoryLabel('');
+  const name = n.name ? categoryLabel(n.name) : n.kind === 'income' ? t('income') : categoryLabel('');
   return c?.icon ? `${c.icon} ${name}` : name;
 }
 

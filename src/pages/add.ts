@@ -19,9 +19,9 @@ import { html } from '../html';
 import { t } from '../i18n';
 import { icon } from '../icons';
 import { ensureRates, onRatesChange, toMain } from '../rates';
-import { newId, sortByDateDesc, type ExpenseType } from '../schema';
+import { categoryName, newId, sortByDateDesc, type ExpenseType } from '../schema';
 import { store } from '../store';
-import { $, confirmDialog, expenseRow, openSheet, toast } from '../ui';
+import { $, categoryLabel, confirmDialog, expenseRow, openSheet, toast } from '../ui';
 
 const RECENT = 6;
 const finePointer = matchMedia('(pointer: fine)');
@@ -162,7 +162,7 @@ export function mountAdd(view: HTMLElement, editId?: string): () => void {
           ${split.map(
             (p) => html`<li>
               <span class="avatar" style="--c:${themedColor(store.category(p.category)?.color ?? '#898781')}" aria-hidden="true">${store.category(p.category)?.icon ?? '🏷️'}</span>
-              <span class="split-name">${p.category}</span>
+              <span class="split-name">${categoryLabel(p.category)}</span>
               <span class="split-amount">${money(p.amount, currency.value)}</span>
             </li>`,
           )}
@@ -179,9 +179,9 @@ export function mountAdd(view: HTMLElement, editId?: string): () => void {
     }
     chips.innerHTML = store.categories
       .map((c) => {
-        const at = picked.indexOf(c.name);
-        return html`<button type="button" class="chip ${at > 0 ? 'tag' : ''}" data-name="${c.name}" aria-pressed="${String(at >= 0)}" style="--c:${themedColor(c.color)}">
-          <span aria-hidden="true">${c.icon}</span>${c.name}
+        const at = picked.indexOf(c.id);
+        return html`<button type="button" class="chip ${at > 0 ? 'tag' : ''}" data-name="${c.id}" aria-pressed="${String(at >= 0)}" style="--c:${themedColor(c.color)}">
+          <span aria-hidden="true">${c.icon}</span>${categoryName(c)}
         </button>`.value;
       })
       .join('');
@@ -461,7 +461,7 @@ function openSplitEditor(total: number, code: string, initial: Part[]): Promise<
               <span class="sr-only">${t('category')}</span>
               <select data-part="${i}" name="category">
                 <option value="" ${p.category ? '' : html`selected`}>${t('category')}…</option>
-                ${store.categories.map((c) => html`<option value="${c.name}" ${c.name === p.category ? html`selected` : ''}>${c.icon} ${c.name}</option>`)}
+                ${store.categories.map((c) => html`<option value="${c.id}" ${c.id === p.category ? html`selected` : ''}>${c.icon} ${categoryName(c)}</option>`)}
               </select>
             </label>
             <label class="field split-amount-field">

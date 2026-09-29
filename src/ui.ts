@@ -1,10 +1,10 @@
-import { themedColor } from './defaults';
+import { seedName, themedColor } from './defaults';
 import { addDays, formatDate, mainCurrency, money, today } from './format';
 import { html, type SafeHtml } from './html';
-import { t } from './i18n';
+import { lang, t } from './i18n';
 import { icon } from './icons';
 import { toMain } from './rates';
-import { allCategories, type Expense } from './schema';
+import { allCategories, categoryName, type Expense } from './schema';
 import { store } from './store';
 
 export const $ = <T extends Element = HTMLElement>(sel: string, root: ParentNode = document): T => root.querySelector<T>(sel)!;
@@ -65,19 +65,27 @@ export function dayLabel(iso: string): string {
   return formatDate(iso, { weekday: 'short', day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }) });
 }
 
-export function categoryBadge(name: string): SafeHtml {
-  const c = store.category(name);
+export function categoryBadge(id: string): SafeHtml {
+  const c = store.category(id);
   const color = themedColor(c?.color ?? '#898781');
-  return html`<span class="avatar" style="--c:${color}" aria-hidden="true">${c?.icon ?? (name ? '🏷️' : '❔')}</span>`;
+  return html`<span class="avatar" style="--c:${color}" aria-hidden="true">${c?.icon ?? (id ? '🏷️' : '❔')}</span>`;
 }
 
-export const categoryLabel = (name: string): string => name || t('uncategorized');
+/**
+ * The name of a category ID in the current language. A category that no longer exists
+ * shows its standard name, or the value as stored.
+ */
+export function categoryLabel(id: string): string {
+  if (!id) return t('uncategorized');
+  const c = store.category(id);
+  return c ? categoryName(c) : (seedName(id, lang) ?? id);
+}
 
 /** One expense in a list; tapping it opens the editor. */
 const expenseTitle = (e: Expense): string => e.note || categoryLabel(e.category);
 
 function expenseSummary(e: Expense, opts: { showDate: boolean }): SafeHtml {
-  const categories = e.tags.length ? allCategories(e).join(' + ') : categoryLabel(e.category);
+  const categories = allCategories(e).map(categoryLabel).join(' + ') || categoryLabel('');
   const meta = [e.note ? categories : '', opts.showDate ? dayLabel(e.date) : ''].filter(Boolean).join(' · ');
   const converted = e.currency === mainCurrency ? null : toMain(e.amount, e.currency, e.date);
   const income = e.type === 'income';

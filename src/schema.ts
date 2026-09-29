@@ -1,12 +1,17 @@
 import { isCurrency, mainCurrency, parseAmount, toIsoDate } from './format';
+import { lang, LANGS, type Lang } from './i18n';
 
 /**
  * The spreadsheet is the database. Two sheets, first row is the header:
  *   Expenses:   Date | Amount | Currency | Category | Note | ID | Type | Group | Tags
- *   Categories: Name  | Icon     | Color    | Keywords (comma separated)
+ *   Categories: Name  | Icon     | Color    | Keywords (comma separated) | ID | Names
  *   Budgets:    Month | Category | Amount   | Currency
  *   Settings:   Key   | Value
- * Expenses reference categories by name so the file stays readable by humans.
+ * Expenses, tags and budgets reference categories by ID, a readable slug ("groceries") that
+ * never changes, so a category can be renamed or shown in another language without touching
+ * them. Names holds the category's name per language ("en: Groceries; it: Spesa"); Name is
+ * the one used when there's no name for the current language. A category typed by name in
+ * the spreadsheet is recognised and switched to its ID (see withIds).
  * Amounts are stored in the currency they were paid in (ISO code, blank = main currency).
  * Type is blank for a normal expense and "income" for money coming in; Group ties
  * together the parts of one expense split across categories. Tags are further categories
@@ -22,7 +27,7 @@ export type Row = Cell[];
 export const EXPENSE_HEADER: Row = ['Date', 'Amount', 'Currency', 'Category', 'Note', 'ID', 'Type', 'Group', 'Tags'];
 /** Column positions in the Expenses sheet. */
 export const COL = { date: 0, amount: 1, currency: 2, category: 3, note: 4, id: 5, type: 6, group: 7, tags: 8 } as const;
-export const CATEGORY_HEADER: Row = ['Name', 'Icon', 'Color', 'Keywords'];
+export const CATEGORY_HEADER: Row = ['Name', 'Icon', 'Color', 'Keywords', 'ID', 'Names'];
 export const BUDGET_HEADER: Row = ['Month', 'Category', 'Amount', 'Currency'];
 export const SETTINGS_HEADER: Row = ['Key', 'Value'];
 
@@ -38,19 +43,35 @@ export interface Expense {
   type: ExpenseType;
   /** Shared by the parts of one expense split across categories ('' when not split). */
   group: string;
-  /** Further categories this expense belongs to; the amount still counts in `category`. */
+  /** IDs of further categories this expense belongs to; the amount still counts in `category`. */
   tags: string[];
 }
 
 export interface Category {
+  /** Stable key referenced by expenses, tags and budgets. */
+  id: string;
+  /** Name used where `names` has none for the current language. */
   name: string;
+  /** The name in each language (may be empty: then `name` is used everywhere). */
+  names: Partial<Record<Lang, string>>;
   icon: string;
   color: string;
   keywords: string[];
 }
 
+/** The category's name in the current language. */
+export const categoryName = (c: Category, l: Lang = lang): string => c.names[l] || c.name;
+
 /** Key/value preferences shared by every device using the file. */
 export type Settings = Record<string, Cell>;
+
+/** Everything a file holds. */
+export interface Data {
+  expenses: Expense[];
+  categories: Category[];
+  budgets: BudgetEntry[];
+  settings: Settings;
+}
 
 export interface Budget {
   amount: number;
@@ -131,14 +152,35 @@ export const allCategories = (e: Expense): string[] => [e.category, ...e.tags].f
 export const splitKeywords = (s: string): string[] =>
   s.split(/[,;\n]/).map((k) => k.trim()).filter(Boolean);
 
-export const categoryToRow = (c: Category): Row => [c.name, c.icon, c.color, c.keywords.join(', ')];
+const LANG_CODES = Object.keys(LANGS) as Lang[];
 
+/** "en: Groceries; it: Spesa" (only the languages that have a name). */
+export const namesToCell = (names: Category['names']): string =>
+  LANG_CODES.filter((l) => names[l])
+    .map((l) => `${l}: ${names[l]!.replace(/;/g, ',')}`)
+    .join('; ');
+
+export function cellToNames(cell: string): Category['names'] {
+  const out: Category['names'] = {};
+  for (const part of cell.split(';')) {
+    const m = /^\s*([a-z]{2})\s*:\s*(.*?)\s*$/i.exec(part);
+    const l = m?.[1].toLowerCase() as Lang | undefined;
+    if (m && l && l in LANGS && m[2]) out[l] = m[2];
+  }
+  return out;
+}
+
+export const categoryToRow = (c: Category): Row => [c.name, c.icon, c.color, c.keywords.join(', '), c.id, namesToCell(c.names)];
+
+/** Categories as in the sheet; ID is '' on rows written by an older version (withIds fills it in). */
 export function rowsToCategories(rows: unknown[][]): Category[] {
   const out: Category[] = [];
   for (const row of rows) {
-    const name = text(row[0]);
-    if (!name || out.some((c) => c.name === name)) continue;
-    out.push({ name, icon: text(row[1]) || '🏷️', color: text(row[2]) || '#898781', keywords: splitKeywords(text(row[3])) });
+    const names = cellToNames(text(row[5]));
+    const name = text(row[0]) || Object.values(names)[0] || '';
+    const id = text(row[4]);
+    if (!name || out.some((c) => (id ? c.id === id : !c.id && c.name === name))) continue;
+    out.push({ id, name, names, icon: text(row[1]) || '🏷️', color: text(row[2]) || '#898781', keywords: splitKeywords(text(row[3])) });
   }
   return out;
 }

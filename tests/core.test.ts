@@ -1,10 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { detectCategory, learn } from '../src/categorize';
-import { defaultCategories, hasForeignKeywords, keywordsInLanguage } from '../src/defaults';
+import { defaultCategories, hasForeignKeywords, keywordsInLanguage, newCategoryId, withIds } from '../src/defaults';
 import { crc32, buildXlsx, Style } from '../src/drivers/xlsx';
 import { isoToSerial, mainCurrency, parseAmount, serialToIso, toIsoDate } from '../src/format';
 import { setRatesForTest, toMain } from '../src/rates';
-import { budgetAt, rowIds, rowsToBudgets, rowsToCategories, rowsToExpenses, type Expense } from '../src/schema';
+import {
+  budgetAt,
+  categoryName,
+  categoryToRow,
+  cellToNames,
+  rowIds,
+  rowsToBudgets,
+  rowsToCategories,
+  rowsToExpenses,
+  type Category,
+  type Expense,
+} from '../src/schema';
 
 const expense = (e: Partial<Expense>): Expense => ({
   id: '1',
@@ -90,16 +101,69 @@ describe('schema', () => {
   it('parses category rows, dropping blanks and duplicates', () => {
     const cats = rowsToCategories([['Spesa', '🛒', '#1baf7a', 'lidl, coop;esselunga'], [''], ['Spesa', 'x'], ['Altro']]);
     expect(cats).toEqual([
-      { name: 'Spesa', icon: '🛒', color: '#1baf7a', keywords: ['lidl', 'coop', 'esselunga'] },
-      { name: 'Altro', icon: '🏷️', color: '#898781', keywords: [] },
+      { id: '', name: 'Spesa', names: {}, icon: '🛒', color: '#1baf7a', keywords: ['lidl', 'coop', 'esselunga'] },
+      { id: '', name: 'Altro', names: {}, icon: '🏷️', color: '#898781', keywords: [] },
     ]);
+  });
+
+  it('round-trips IDs and names per language', () => {
+    const [groceries] = defaultCategories('it');
+    expect(rowsToCategories([categoryToRow(groceries)])).toEqual([groceries]);
+    expect(categoryToRow(groceries)[5]).toBe('en: Groceries; it: Spesa; es: Supermercado; fr: Courses; de: Lebensmittel');
+    expect(cellToNames(' it : Casa ; xx: nope; de:')).toEqual({ it: 'Casa' });
+  });
+
+  it('shows the name of the current language, or the plain name', () => {
+    const [groceries] = defaultCategories('it');
+    expect(categoryName(groceries, 'de')).toBe('Lebensmittel');
+    expect(categoryName({ ...groceries, names: {} }, 'de')).toBe('Spesa');
+  });
+});
+
+describe('withIds', () => {
+  const legacy = (name: string, keywords: string[] = []): Category => ({ id: '', name, names: {}, icon: '🏷️', color: '#898781', keywords });
+
+  it('gives old categories an ID and points expenses, tags and budgets to it', () => {
+    const m = withIds({
+      categories: [legacy('Spesa'), legacy('Barca'), legacy('Ristoranti', defaultCategories('it')[1].keywords)],
+      expenses: [
+        expense({ id: '1', date: '2026-09-01', amount: 3, category: 'Spesa', note: '', tags: ['barca'] }),
+        // Typed by hand in another language: still the same category.
+        expense({ id: '2', date: '2026-09-02', amount: 3, category: 'Groceries', note: '' }),
+        expense({ id: '3', date: '2026-09-03', amount: 3, category: 'Sconosciuta', note: '' }),
+      ],
+      budgets: [{ month: '2026-01', category: 'Barca', amount: 50, currency: 'EUR' }],
+      settings: {},
+    });
+    const [groceries, boat, eatingOut] = m.data.categories;
+    expect(groceries).toMatchObject({ id: 'groceries', names: { en: 'Groceries', de: 'Lebensmittel' } });
+    expect(boat).toMatchObject({ id: 'barca', names: {} });
+    // A standard category the user renamed keeps its ID from the keywords, and the user's name.
+    expect(eatingOut).toMatchObject({ id: 'eating-out', name: 'Ristoranti', names: {} });
+    expect(m.data.expenses.map((e) => [e.category, e.tags])).toEqual([
+      ['groceries', ['barca']],
+      ['groceries', []],
+      ['Sconosciuta', []],
+    ]);
+    expect(m.data.budgets[0].category).toBe('barca');
+    expect(m).toMatchObject({ categories: true, budgets: true, relabel: { Spesa: 'groceries', Groceries: 'groceries', Barca: 'barca' } });
+  });
+
+  it('changes nothing once everything has IDs', () => {
+    const data = withIds({ categories: defaultCategories('it'), expenses: [expense({ id: '1', date: '2026-09-01', amount: 3, category: 'groceries', note: '' })], budgets: [], settings: {} });
+    expect(data).toMatchObject({ categories: false, budgets: false, relabel: {} });
+  });
+
+  it('makes unique IDs for new categories', () => {
+    expect(newCategoryId('Casa al mare', [])).toBe('casa-al-mare');
+    expect(newCategoryId('Home', defaultCategories('en'))).toBe('home-2');
   });
 });
 
 describe('category keywords', () => {
   it('moves a standard category to another language, keeping what the user added', () => {
     const groceries = defaultCategories('it')[0];
-    const next = keywordsInLanguage(groceries.name, 'de', [...groceries.keywords, 'panetteria di Luca'])!;
+    const next = keywordsInLanguage(groceries, 'de', [...groceries.keywords, 'panetteria di Luca'])!;
     expect(next).toContain('supermarkt');
     expect(next).toContain('lidl'); // proper nouns stay
     expect(next).not.toContain('supermercato'); // the Italian words go
@@ -108,12 +172,13 @@ describe('category keywords', () => {
 
   it('still recognises a standard category the user renamed', () => {
     const eatingOut = defaultCategories('it')[1];
-    expect(keywordsInLanguage('Ristoranti', 'it', eatingOut.keywords)).toContain('trattoria');
+    expect(keywordsInLanguage({ name: 'Ristoranti', keywords: eatingOut.keywords }, 'it')).toContain('trattoria');
+    expect(keywordsInLanguage({ id: 'eating-out', name: 'Mangiare fuori', keywords: [] }, 'it')).toContain('trattoria');
   });
 
   it('leaves categories of the user alone', () => {
-    expect(keywordsInLanguage('Barca', 'it', ['ormeggio', 'porto', 'vela', 'gasolio', 'bar', 'cena'])).toBeNull();
-    expect(hasForeignKeywords({ name: 'Barca', icon: '⛵', color: '#898781', keywords: ['ormeggio'] }, 'it')).toBe(false);
+    expect(keywordsInLanguage({ id: 'barca', name: 'Barca', keywords: ['ormeggio', 'porto', 'vela', 'gasolio', 'bar', 'cena'] }, 'it')).toBeNull();
+    expect(hasForeignKeywords({ id: 'barca', name: 'Barca', keywords: ['ormeggio'] }, 'it')).toBe(false);
   });
 
   it('flags a standard category holding another language', () => {
@@ -126,7 +191,7 @@ describe('category keywords', () => {
 
 describe('detectCategory', () => {
   const it_ = defaultCategories('it');
-  const name = (i: number) => it_[i].name;
+  const name = (i: number) => it_[i].id;
   const empty = learn([]);
 
   it.each([
@@ -151,8 +216,8 @@ describe('detectCategory', () => {
   it('uses the words of the chosen language only', () => {
     const fr = defaultCategories('fr');
     const de = defaultCategories('de');
-    expect(detectCategory('Supermarché', fr, empty)).toBe(fr[0].name);
-    expect(detectCategory('Tankstelle', de, empty)).toBe(de[2].name);
+    expect(detectCategory('Supermarché', fr, empty)).toBe(fr[0].id);
+    expect(detectCategory('Tankstelle', de, empty)).toBe(de[2].id);
     expect(detectCategory('Tankstelle', it_, empty)).toBeNull();
     expect(detectCategory('spesa settimanale', de, empty)).toBeNull();
   });
@@ -160,9 +225,9 @@ describe('detectCategory', () => {
   it('matches proper nouns whatever the language', () => {
     for (const code of ['en', 'it', 'es', 'fr', 'de'] as const) {
       const cats = defaultCategories(code);
-      expect(detectCategory('Lidl', cats, empty)).toBe(cats[0].name);
-      expect(detectCategory('Netflix', cats, empty)).toBe(cats[6].name);
-      expect(detectCategory('Volo Ryanair', cats, empty)).toBe(cats[7].name);
+      expect(detectCategory('Lidl', cats, empty)).toBe(cats[0].id);
+      expect(detectCategory('Netflix', cats, empty)).toBe(cats[6].id);
+      expect(detectCategory('Volo Ryanair', cats, empty)).toBe(cats[7].id);
     }
   });
 

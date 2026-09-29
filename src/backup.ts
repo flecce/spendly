@@ -1,3 +1,4 @@
+import { withIds } from './defaults';
 import { today } from './format';
 import {
   budgetToRow,
@@ -9,25 +10,17 @@ import {
   rowsToSettings,
   settingsToRows,
   type BudgetEntry,
-  type Category,
-  type Expense,
+  type Data,
   type Row,
-  type Settings,
 } from './schema';
 
 /**
  * A backup file carries the same rows as the spreadsheet, so importing it goes through
  * the same parsing (and forgiveness) as reading the file, whichever account made it.
+ * Version 1 files reference categories by name: they get IDs on the way in.
  */
 const APP = 'spendly';
-const VERSION = 1;
-
-export interface Data {
-  expenses: Expense[];
-  categories: Category[];
-  budgets: BudgetEntry[];
-  settings: Settings;
-}
+const VERSION = 2;
 
 interface BackupFile {
   app: typeof APP;
@@ -63,27 +56,27 @@ export function fromBackup(text: string): Data | null {
     return null;
   }
   if (!file || typeof file !== 'object' || file.app !== APP) return null;
-  return {
+  return withIds({
     expenses: rowsToExpenses(rows(file.expenses)),
     categories: rowsToCategories(rows(file.categories)),
     budgets: rowsToBudgets(rows(file.budgets)),
     settings: rowsToSettings(rows(file.settings)),
-  };
+  }).data;
 }
 
 /**
- * What a backup adds to the current data: expenses, categories, budget entries and
+ * What a backup adds to the current data: expenses, categories (by ID), budget entries and
  * settings that aren't there yet. Nothing already present is overwritten, so importing
  * the same file twice changes nothing.
  */
 export function newInBackup(current: Data, backup: Data): Data {
   const ids = new Set(current.expenses.map((e) => e.id));
-  const names = new Set(current.categories.map((c) => c.name));
+  const categoryIds = new Set(current.categories.map((c) => c.id));
   const budgetKey = (b: BudgetEntry) => `${b.month}|${b.category}`;
   const budgets = new Set(current.budgets.map(budgetKey));
   return {
     expenses: backup.expenses.filter((e) => !ids.has(e.id)),
-    categories: backup.categories.filter((c) => !names.has(c.name)),
+    categories: backup.categories.filter((c) => !categoryIds.has(c.id)),
     budgets: backup.budgets.filter((b) => !budgets.has(budgetKey(b))),
     settings: Object.fromEntries(Object.entries(backup.settings).filter(([k]) => !(k in current.settings))),
   };

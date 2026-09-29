@@ -1,9 +1,9 @@
-import { EMOJIS, hasForeignKeywords, keywordsInLanguage, PALETTE, themedColor } from '../defaults';
+import { EMOJIS, hasForeignKeywords, keywordsInLanguage, newCategoryId, PALETTE, themedColor } from '../defaults';
 import { amountInputValue, mainCurrency, money, parseAmount, today } from '../format';
 import { html } from '../html';
-import { countLabel, lang, LANGS, t } from '../i18n';
+import { countLabel, lang, LANGS, t, type Lang } from '../i18n';
 import { icon } from '../icons';
-import { splitKeywords } from '../schema';
+import { categoryName, splitKeywords, type Category } from '../schema';
 import { store } from '../store';
 import { $, categoryBadge, confirmDialog, openSheet, toast } from '../ui';
 
@@ -17,14 +17,15 @@ function firstGrapheme(s: string): string {
   return seg[Symbol.iterator]().next().value?.segment ?? '';
 }
 
-function openEditor(name: string | null): void {
-  const cat = name === null ? undefined : store.category(name);
-  const budget = cat ? store.budgetFor(today().slice(0, 7), cat.name) : null;
+function openEditor(id: string | null): void {
+  const cat = id === null ? undefined : store.category(id);
+  const budget = cat ? store.budgetFor(today().slice(0, 7), cat.id) : null;
   const used = new Set(store.categories.map((c) => c.color.toLowerCase()));
   const color = cat?.color ?? PALETTE.find(([light]) => !used.has(light))?.[0] ?? PALETTE[0][0];
+  const otherLangs = (Object.keys(LANGS) as Lang[]).filter((l) => l !== lang);
 
   // Standard categories can drop the keywords of the other languages and keep the ones of this one.
-  const canRetune = cat ? keywordsInLanguage(cat.name, lang, cat.keywords) !== null : false;
+  const canRetune = cat ? keywordsInLanguage(cat, lang) !== null : false;
 
   const dialog = openSheet(html`
     <form class="sheet-body cat-form" novalidate>
@@ -39,10 +40,21 @@ function openEditor(name: string | null): void {
         </label>
         <label class="field grow">
           <span class="label">${t('name')}</span>
-          <input name="name" required maxlength="40" autocomplete="off" value="${cat?.name ?? ''}" aria-describedby="name-error" />
+          <input name="name" required maxlength="40" autocomplete="off" value="${cat ? categoryName(cat) : ''}" aria-describedby="name-error" />
           <span class="field-error" id="name-error" aria-live="polite"></span>
         </label>
       </div>
+      <details class="field translations" ${cat && otherLangs.some((l) => cat.names[l]) ? html`open` : ''}>
+        <summary class="label">${t('translations')}</summary>
+        <span class="hint">${t('translationsHint')}</span>
+        ${otherLangs.map(
+          (l) => html`<label class="field translation">
+            <span class="label">${LANGS[l]}</span>
+            <input name="name-${l}" maxlength="40" autocomplete="off" value="${cat?.names[l] ?? ''}" placeholder="${cat ? categoryName(cat) : ''}" />
+          </label>`,
+        )}
+        ${cat ? html`<span class="hint">ID: <code>${cat.id}</code></span>` : ''}
+      </details>
       <div class="emoji-grid" role="group" aria-label="${t('icon')}">
         ${EMOJIS.map((e) => html`<button type="button" data-emoji="${e}">${e}</button>`)}
       </div>
@@ -97,10 +109,10 @@ function openEditor(name: string | null): void {
     if (action === 'close') dialog.close();
     if (action === 'keywords-default' && cat) {
       // Keeps whatever the user added, drops the words of the other languages.
-      keywordsInput.value = (keywordsInLanguage(cat.name, lang, splitKeywords(keywordsInput.value)) ?? []).join(', ');
+      keywordsInput.value = (keywordsInLanguage(cat, lang, splitKeywords(keywordsInput.value)) ?? []).join(', ');
     }
-    if (action === 'delete' && cat && (await confirmDialog(t('confirmDeleteCategory', { name: cat.name }), t('delete')))) {
-      store.deleteCategory(cat.name);
+    if (action === 'delete' && cat && (await confirmDialog(t('confirmDeleteCategory', { name: categoryName(cat) }), t('delete')))) {
+      store.deleteCategory(cat.id);
       toast(t('deleted'));
       dialog.close();
     }
@@ -114,7 +126,7 @@ function openEditor(name: string | null): void {
     const newName = String(data.get('name') ?? '').trim();
     const error = !newName
       ? t('nameRequired')
-      : store.categories.some((c) => c.name.toLowerCase() === newName.toLowerCase() && c !== cat)
+      : store.categories.some((c) => categoryName(c).toLowerCase() === newName.toLowerCase() && c !== cat)
         ? t('nameTaken')
         : '';
     if (error) {
@@ -122,14 +134,24 @@ function openEditor(name: string | null): void {
       nameInput.focus();
       return;
     }
-    store.saveCategory(cat?.name ?? null, {
+    // With no translations the name is the same in every language; with some, it is this language's.
+    const names: Category['names'] = {};
+    for (const l of otherLangs) {
+      const value = String(data.get(`name-${l}`) ?? '').trim();
+      if (value) names[l] = value;
+    }
+    if (Object.keys(names).length) names[lang] = newName;
+    const saved: Category = {
+      id: cat?.id ?? newCategoryId(newName, store.categories),
       name: newName,
+      names,
       icon: firstGrapheme(String(data.get('icon') ?? '')) || '🏷️',
       color: String(data.get('color') ?? color),
       keywords: splitKeywords(String(data.get('keywords') ?? '')),
-    });
+    };
+    store.saveCategory(saved);
     const wanted = Math.max(0, parseAmount(String(data.get('budget') ?? '')) ?? 0);
-    if (Math.abs(wanted - (budget?.amount ?? 0)) > 0.009) store.setBudget(wanted, newName);
+    if (Math.abs(wanted - (budget?.amount ?? 0)) > 0.009) store.setBudget(wanted, saved.id);
     toast(t('saved'));
     dialog.close();
   });
@@ -138,8 +160,8 @@ function openEditor(name: string | null): void {
 /** Rewrites the standard categories' keywords in the current language, keeping the user's own additions. */
 function useCurrentLanguageKeywords(): void {
   for (const c of [...store.categories]) {
-    const keywords = keywordsInLanguage(c.name, lang, c.keywords);
-    if (keywords && keywords.join(',') !== c.keywords.join(',')) store.saveCategory(c.name, { ...c, keywords });
+    const keywords = keywordsInLanguage(c, lang);
+    if (keywords && keywords.join(',') !== c.keywords.join(',')) store.saveCategory({ ...c, keywords });
   }
   toast(t('keywordsUpdated'));
 }
@@ -167,15 +189,15 @@ export function mountCategories(view: HTMLElement): () => void {
             ${store.categories.map((c) => {
               const preview = c.keywords.slice(0, PREVIEW_KEYWORDS).join(', ') + (c.keywords.length > PREVIEW_KEYWORDS ? '…' : '');
               return html`<li>
-                <button type="button" class="row" data-name="${c.name}">
-                  ${categoryBadge(c.name)}
+                <button type="button" class="row" data-id="${c.id}">
+                  ${categoryBadge(c.id)}
                   <span class="row-main">
-                    <span class="row-title">${c.name}</span>
+                    <span class="row-title">${categoryName(c)}</span>
                     <span class="row-meta">${preview || t('noKeywords')}</span>
                   </span>
                   <span class="row-side">
-                    ${budgets.get(c.name) ? html`<span class="budget-tag">${money(budgets.get(c.name)!.amount, budgets.get(c.name)!.currency)}</span>` : ''}
-                    ${countLabel(counts.get(c.name) ?? 0)}
+                    ${budgets.get(c.id) ? html`<span class="budget-tag">${money(budgets.get(c.id)!.amount, budgets.get(c.id)!.currency)}</span>` : ''}
+                    ${countLabel(counts.get(c.id) ?? 0)}
                   </span>
                   ${icon('chevron', 'muted')}
                 </button>
@@ -190,8 +212,8 @@ export function mountCategories(view: HTMLElement): () => void {
     const target = e.target as Element;
     if (target.closest('[data-action=new]')) return openEditor(null);
     if (target.closest('[data-action=retune]')) return useCurrentLanguageKeywords();
-    const row = target.closest<HTMLElement>('[data-name]');
-    if (row) openEditor(row.dataset.name!);
+    const row = target.closest<HTMLElement>('[data-id]');
+    if (row) openEditor(row.dataset.id!);
   }
 
   view.addEventListener('click', onClick);

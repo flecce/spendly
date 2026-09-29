@@ -1,6 +1,6 @@
 import { normalize } from './categorize';
 import { LANGS, type Lang } from './i18n';
-import type { Category } from './schema';
+import type { Category, Data } from './schema';
 import { isDark } from './theme';
 
 /** Categorical palette (light value → dark-surface step of the same hue). */
@@ -23,6 +23,8 @@ export const themedColor = (hex: string): string =>
   isDark() ? (DARK.get(hex.toLowerCase()) ?? hex) : hex;
 
 interface Seed {
+  /** The category ID: the same in every language and every file. */
+  id: string;
   icon: string;
   color: string;
   names: Record<Lang, string>;
@@ -34,6 +36,7 @@ interface Seed {
 
 const SEEDS: Seed[] = [
   {
+    id: 'groceries',
     icon: '🛒',
     color: '#1baf7a',
     names: { en: 'Groceries', it: 'Spesa', es: 'Supermercado', fr: 'Courses', de: 'Lebensmittel' },
@@ -50,6 +53,7 @@ const SEEDS: Seed[] = [
     },
   },
   {
+    id: 'eating-out',
     icon: '🍽️',
     color: '#eb6834',
     names: { en: 'Eating out', it: 'Ristoranti e bar', es: 'Restaurantes', fr: 'Restaurants', de: 'Essen gehen' },
@@ -65,6 +69,7 @@ const SEEDS: Seed[] = [
     },
   },
   {
+    id: 'transport',
     icon: '🚗',
     color: '#2a78d6',
     names: { en: 'Transport', it: 'Trasporti', es: 'Transporte', fr: 'Transports', de: 'Verkehr' },
@@ -80,6 +85,7 @@ const SEEDS: Seed[] = [
     },
   },
   {
+    id: 'home',
     icon: '🏠',
     color: '#4a3aa7',
     names: { en: 'Home & bills', it: 'Casa e bollette', es: 'Casa y facturas', fr: 'Logement & factures', de: 'Wohnen & Rechnungen' },
@@ -95,6 +101,7 @@ const SEEDS: Seed[] = [
     },
   },
   {
+    id: 'health',
     icon: '💊',
     color: '#e34948',
     names: { en: 'Health & care', it: 'Salute e benessere', es: 'Salud y bienestar', fr: 'Santé & bien-être', de: 'Gesundheit & Pflege' },
@@ -108,6 +115,7 @@ const SEEDS: Seed[] = [
     },
   },
   {
+    id: 'shopping',
     icon: '🛍️',
     color: '#e87ba4',
     names: { en: 'Shopping', it: 'Shopping', es: 'Compras', fr: 'Shopping', de: 'Shopping' },
@@ -124,6 +132,7 @@ const SEEDS: Seed[] = [
     },
   },
   {
+    id: 'leisure',
     icon: '🎬',
     color: '#eda100',
     names: { en: 'Leisure', it: 'Svago', es: 'Ocio', fr: 'Loisirs', de: 'Freizeit' },
@@ -139,6 +148,7 @@ const SEEDS: Seed[] = [
     },
   },
   {
+    id: 'travel',
     icon: '✈️',
     color: '#008300',
     names: { en: 'Travel', it: 'Viaggi', es: 'Viajes', fr: 'Voyages', de: 'Reisen' },
@@ -154,6 +164,7 @@ const SEEDS: Seed[] = [
     },
   },
   {
+    id: 'other',
     icon: '📦',
     color: '#898781',
     names: { en: 'Other', it: 'Altro', es: 'Otros', fr: 'Autres', de: 'Sonstiges' },
@@ -180,9 +191,11 @@ const unique = (keywords: string[]): string[] => {
 /** The everyday words of one language, then the proper nouns: what a fresh install gets. */
 const seedKeywords = (seed: Seed, lang: Lang): string[] => unique([...list(seed.words[lang]), ...list(seed.shared)]);
 
+const nameKey = (s: string): string => s.trim().toLowerCase();
+
 const seedByName = (name: string): Seed | undefined => {
-  const wanted = name.trim().toLowerCase();
-  return SEEDS.find((s) => Object.values(s.names).some((v) => v.toLowerCase() === wanted));
+  const wanted = nameKey(name);
+  return SEEDS.find((s) => Object.values(s.names).some((v) => nameKey(v) === wanted));
 };
 
 /** Most of one language's default words are there: this is a standard category the user renamed. */
@@ -194,35 +207,116 @@ const holdsSeedWords = (seed: Seed, keywords: string[]): boolean => {
   });
 };
 
-const seedFor = (name: string, keywords?: string[]): Seed | undefined =>
-  seedByName(name) ?? (keywords?.length ? SEEDS.find((s) => holdsSeedWords(s, keywords)) : undefined);
+type CategoryLike = Pick<Category, 'name' | 'keywords'> & { id?: string };
 
-/** The same standard category in another language, or null when it isn't a standard one. */
-export function seedNameFor(name: string, lang: Lang): string | null {
-  return seedFor(name)?.names[lang] ?? null;
-}
+/** The standard category this one is: by ID, else by name in any language, else by its keywords. */
+const seedFor = (c: CategoryLike): Seed | undefined =>
+  (c.id ? SEEDS.find((s) => s.id === c.id) : undefined) ??
+  seedByName(c.name) ??
+  (c.keywords.length ? SEEDS.find((s) => holdsSeedWords(s, c.keywords)) : undefined);
+
+/** Name of a standard category ID in a language (for expenses whose category was deleted). */
+export const seedName = (id: string, lang: Lang): string | null => SEEDS.find((s) => s.id === id)?.names[lang] ?? null;
 
 /**
  * The keywords of a standard category restated in `lang`: the defaults for that language plus
  * whatever the user added themselves. Words belonging to the other languages are dropped.
  */
-export function keywordsInLanguage(name: string, lang: Lang, keywords: string[]): string[] | null {
-  const seed = seedFor(name, keywords);
+export function keywordsInLanguage(c: CategoryLike, lang: Lang, keywords = c.keywords): string[] | null {
+  const seed = seedFor(c);
   if (!seed) return null;
   const known = new Set(LANG_CODES.flatMap((l) => list(seed.words[l])).map(normalize));
   return unique([...seedKeywords(seed, lang), ...keywords.filter((k) => !known.has(normalize(k)))]);
 }
 
 /** True when a standard category still carries words from another language. Order doesn't count. */
-export function hasForeignKeywords(category: Category, lang: Lang): boolean {
-  const next = keywordsInLanguage(category.name, lang, category.keywords);
+export function hasForeignKeywords(category: CategoryLike, lang: Lang): boolean {
+  const next = keywordsInLanguage(category, lang);
   if (!next) return false;
   const have = new Set(category.keywords.map(normalize));
   return next.length !== have.size || next.some((k) => !have.has(normalize(k)));
 }
 
 export function defaultCategories(lang: Lang): Category[] {
-  return SEEDS.map((s) => ({ name: s.names[lang], icon: s.icon, color: s.color, keywords: seedKeywords(s, lang) }));
+  return SEEDS.map((s) => ({
+    id: s.id,
+    name: s.names[lang],
+    names: { ...s.names },
+    icon: s.icon,
+    color: s.color,
+    keywords: seedKeywords(s, lang),
+  }));
+}
+
+/** A readable ID from a name ("Casa al mare" → "casa-al-mare"), not among `taken`. */
+function uniqueId(name: string, taken: Set<string>): string {
+  const base = normalize(name).replace(/ /g, '-') || 'category';
+  let id = base;
+  for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
+  return id;
+}
+
+export const newCategoryId = (name: string, categories: Category[]): string =>
+  uniqueId(name, new Set(categories.map((c) => c.id)));
+
+export interface Migration {
+  data: Data;
+  /** Some categories got an ID (or names): the Categories sheet needs writing. */
+  categories: boolean;
+  budgets: boolean;
+  /** Category values in the Expenses sheet to replace (name as written → ID). */
+  relabel: Record<string, string>;
+}
+
+/**
+ * Gives every category an ID and makes expenses, tags and budgets point to IDs. Files written
+ * by an older version (and categories typed by name in the spreadsheet) reference categories
+ * by name: any of their names, in any language, leads to the ID. Values that match no category
+ * are kept as they are.
+ */
+export function withIds(d: Data): Migration {
+  let categoriesChanged = false;
+  const taken = new Set(d.categories.map((c) => c.id).filter(Boolean));
+  const categories = d.categories.map((c) => {
+    if (c.id) return c;
+    categoriesChanged = true;
+    const seed = seedFor(c);
+    if (seed && !taken.has(seed.id)) {
+      taken.add(seed.id);
+      // Still under a standard name: it gets that name in every language. Renamed: it keeps the user's name.
+      return { ...c, id: seed.id, names: seedByName(c.name) === seed ? { ...seed.names } : c.names };
+    }
+    const id = uniqueId(c.name, taken);
+    taken.add(id);
+    return { ...c, id };
+  });
+
+  const ids = new Set(categories.map((c) => c.id));
+  const byName = new Map<string, string>();
+  for (const s of SEEDS) for (const n of Object.values(s.names)) byName.set(nameKey(n), s.id);
+  for (const c of categories) for (const n of [c.name, ...Object.values(c.names)]) if (n) byName.set(nameKey(n), c.id);
+  const relabel: Record<string, string> = {};
+  const resolve = (v: string): string => {
+    if (!v || ids.has(v)) return v;
+    const id = byName.get(nameKey(v));
+    if (!id || id === v) return v;
+    relabel[v] = id;
+    return id;
+  };
+
+  const expenses = d.expenses.map((e) => {
+    const category = resolve(e.category);
+    const tags = [...new Set(e.tags.map(resolve))].filter((tag) => tag && tag !== category);
+    return category === e.category && tags.join('\n') === e.tags.join('\n') ? e : { ...e, category, tags };
+  });
+  let budgetsChanged = false;
+  const budgets = d.budgets.map((b) => {
+    const category = resolve(b.category);
+    if (category === b.category) return b;
+    budgetsChanged = true;
+    return { ...b, category };
+  });
+  return { data: { ...d, categories, expenses, budgets }, categories: categoriesChanged, budgets: budgetsChanged, relabel };
 }
 
 export const EMOJIS = ['🛒', '🍽️', '☕', '🍕', '🚗', '⛽', '🚆', '🏠', '💡', '📱', '💊', '🏋️', '🛍️', '👕', '🎁', '🎬', '🎮', '🎵', '✈️', '🏖️', '🐶', '👶', '🎓', '💼', '💸', '🧾', '🔧', '📦'];

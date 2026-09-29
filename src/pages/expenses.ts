@@ -60,7 +60,7 @@ export function mountExpenses(view: HTMLElement): () => void {
     observer?.disconnect();
     const q = normalize(query);
     const all = sortByDateDesc(store.expenses, store.expenses);
-    const matches = q ? all.filter((e) => normalize(`${e.note} ${allCategories(e).join(' ') || categoryLabel('')}`).includes(q)) : all;
+    const matches = q ? all.filter((e) => normalize(`${e.note} ${allCategories(e).map(categoryLabel).join(' ') || categoryLabel('')}`).includes(q)) : all;
     count.textContent = countLabel(matches.length);
 
     if (!matches.length) {

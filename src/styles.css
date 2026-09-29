@@ -262,6 +262,31 @@ textarea {
   cursor: pointer;
 }
 
+.translations summary {
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.translations[open] {
+  gap: 10px;
+}
+
+.translation {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.translation .label {
+  flex: 0 0 76px;
+  font-weight: 500;
+}
+
+.translation input {
+  flex: 1;
+  min-width: 0;
+}
+
 .field-error {
   color: var(--danger);
   font-size: 13px;

@@ -5,7 +5,7 @@ import { html, type SafeHtml } from '../html';
 import { countLabel, t, type Key } from '../i18n';
 import { icon } from '../icons';
 import { onRatesChange, toMain } from '../rates';
-import { sortByDateDesc, type Expense } from '../schema';
+import { categoryName, sortByDateDesc, type Expense } from '../schema';
 import { openSankey } from '../sankey';
 import { store } from '../store';
 import { $, categoryBadge, categoryLabel, dayLabel, expenseRow } from '../ui';
@@ -167,7 +167,7 @@ export function mountDashboard(view: HTMLElement): () => void {
 
   /** One category row: share of the period and, for a single month, how it sits against its budget. */
   function categoryBar(name: string, c: { total: number; count: number }, maxCat: number, catTotal: number, monthDay: string | null): SafeHtml {
-    // An empty name means "uncategorized": it has no budget of its own (that key is the overall one).
+    // `name` is the category ID. Empty means "uncategorized": it has no budget of its own (that key is the overall one).
     const budget = monthDay && name ? store.budgetFor(monthDay.slice(0, 7), name) : null;
     const budgetAmount = budget ? (toMain(budget.amount, budget.currency, monthDay!) ?? budget.amount) : null;
     const over = budgetAmount !== null && c.total > budgetAmount;
@@ -196,7 +196,7 @@ export function mountDashboard(view: HTMLElement): () => void {
   function render(): void {
     const [from, to] = period();
     const unit = unitChoice ?? autoUnit(daysBetween(from, to) + 1);
-    if (filter !== null && !store.expenses.some((e) => e.category === filter) && !store.categories.some((c) => c.name === filter)) {
+    if (filter !== null && !store.expenses.some((e) => e.category === filter) && !store.categories.some((c) => c.id === filter)) {
       filter = null;
     }
 
@@ -249,7 +249,7 @@ export function mountDashboard(view: HTMLElement): () => void {
           <span class="sr-only">${t('category')}</span>
           <select name="category">
             <option value="" ${filter === null ? html`selected` : ''}>${t('allCategories')}</option>
-            ${store.categories.map((c) => html`<option value="${c.name}" ${filter === c.name ? html`selected` : ''}>${c.icon} ${c.name}</option>`)}
+            ${store.categories.map((c) => html`<option value="${c.id}" ${filter === c.id ? html`selected` : ''}>${c.icon} ${categoryName(c)}</option>`)}
           </select>
         </label>
         <label class="field" title="${t('groupBy')}">

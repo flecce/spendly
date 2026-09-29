@@ -118,15 +118,21 @@ export class GoogleSheetsDriver implements Driver {
     await this.repairHeader();
   }
 
-  /** Files written by an older version have fewer columns: bring the header row up to date. */
+  /** Files written by an older version have fewer columns: bring the header rows up to date. */
   private async repairHeader(): Promise<void> {
-    const res = await this.call<ValueRange>(this.values('Expenses!A1:I1'));
-    const current = (res.values?.[0] ?? []).map(String);
-    if (EXPENSE_HEADER.some((h, i) => current[i] !== h)) await this.put('Expenses!A1:I1', [EXPENSE_HEADER]);
+    const ranges = ['Expenses!A1:I1', 'Categories!A1:F1'];
+    const res = await this.call<{ valueRanges: ValueRange[] }>(
+      `${SHEETS}/${this.id}/values:batchGet?${ranges.map((r) => `ranges=${encodeURIComponent(r)}`).join('&')}`,
+    );
+    const headers = [EXPENSE_HEADER, CATEGORY_HEADER];
+    for (const [i, header] of headers.entries()) {
+      const current = (res.valueRanges[i].values?.[0] ?? []).map(String);
+      if (header.some((h, j) => current[j] !== h)) await this.put(ranges[i], [header]);
+    }
   }
 
   async read() {
-    const ranges = [EXPENSES, 'Categories!A2:D', 'Budgets!A2:D', 'Settings!A2:B']
+    const ranges = [EXPENSES, 'Categories!A2:F', 'Budgets!A2:D', 'Settings!A2:B']
       .map((r) => `ranges=${encodeURIComponent(r)}`)
       .join('&');
     const res = await this.call<{ valueRanges: ValueRange[] }>(
@@ -187,8 +193,8 @@ export class GoogleSheetsDriver implements Driver {
 
   async writeCategories(rows: Row[]): Promise<void> {
     // Write first, then clear what's left below: never a moment with an empty sheet.
-    if (rows.length) await this.put(`Categories!A2:D${rows.length + 1}`, rows);
-    await this.call(this.values(`Categories!A${rows.length + 2}:D`, ':clear'), { method: 'POST' });
+    if (rows.length) await this.put(`Categories!A2:F${rows.length + 1}`, rows);
+    await this.call(this.values(`Categories!A${rows.length + 2}:F`, ':clear'), { method: 'POST' });
   }
 
   async writeBudgets(rows: Row[]): Promise<void> {

@@ -1,7 +1,7 @@
 import { logout, type Account, type Provider } from '../auth/session';
 import { download, fromBackup, isEmpty, newInBackup } from '../backup';
 import { openBudgetEditor } from '../budget';
-import { keywordsInLanguage, seedNameFor } from '../defaults';
+import { keywordsInLanguage } from '../defaults';
 import { CURRENCIES, currencyName, mainCurrency, money, setMainCurrency } from '../format';
 import { html } from '../html';
 import { lang, LANGS, setLang, t, type Lang } from '../i18n';
@@ -19,23 +19,20 @@ const APP_NAME: Record<Provider, string> = { google: 'Google Sheets', microsoft:
 export const initials = (a: Account): string =>
   (a.name || a.email || '?').split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?';
 
-/** Settings sheet: account, language, currency, sync, sign out. `onPrefsChange` re-renders the app. */
-/** The standard categories sit in the file in one language: offer to move them, keywords included, to the new one. */
-async function offerCategoryTranslation(lang: Lang): Promise<void> {
-  const taken = new Set(store.categories.map((c) => c.name));
+/**
+ * Category names follow the language by themselves; the keywords of the standard categories
+ * are one list in the file: offer to switch them to the new language.
+ */
+async function offerKeywordTranslation(lang: Lang): Promise<void> {
   const todo = store.categories
     .map((category) => {
-      // A category the user renamed keeps its name, but its keywords still follow the language.
-      const seeded = seedNameFor(category.name, lang);
-      const name = seeded && seeded !== category.name && !taken.has(seeded) ? seeded : category.name;
-      const keywords = keywordsInLanguage(category.name, lang, category.keywords) ?? category.keywords;
-      const changed = name !== category.name || keywords.join(',') !== category.keywords.join(',');
-      return changed ? { category, name, keywords } : null;
+      const keywords = keywordsInLanguage(category, lang);
+      return keywords && keywords.join(',') !== category.keywords.join(',') ? { ...category, keywords } : null;
     })
     .filter((x) => x !== null);
   if (!todo.length) return;
   if (!(await confirmDialog(t('translateCategoriesAsk', { lang: LANGS[lang] }), t('translate')))) return;
-  for (const { category, name, keywords } of todo) store.saveCategory(category.name, { ...category, name, keywords });
+  for (const category of todo) store.saveCategory(category);
   toast(t('categoriesTranslated'));
 }
 
@@ -142,7 +139,7 @@ export function openSettings(account: Account, onPrefsChange: () => void): void 
     const next = (e.target as HTMLSelectElement).value as Lang;
     setLang(next);
     reopen();
-    void offerCategoryTranslation(next);
+    void offerKeywordTranslation(next);
   });
   $<HTMLSelectElement>('[name=currency]', dialog).addEventListener('change', (e) => {
     setMainCurrency((e.target as HTMLSelectElement).value);

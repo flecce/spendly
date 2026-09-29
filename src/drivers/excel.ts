@@ -17,7 +17,7 @@ import { buildXlsx, Style } from './xlsx';
 const DRIVE = 'https://graph.microsoft.com/v1.0/me/drive';
 const FILE = 'Spendly.xlsx';
 const EXPENSE_FORMATS = ['yyyy-mm-dd', '#,##0.00', '@', '@', '@', '@', '@', '@', '@'];
-const CATEGORY_FORMATS = ['@', '@', '@', '@'];
+const CATEGORY_FORMATS = ['@', '@', '@', '@', '@', '@'];
 const BUDGET_FORMATS = ['@', '@', '#,##0.00', '@'];
 const SETTINGS_FORMATS = ['@', 'General'];
 
@@ -53,12 +53,16 @@ export class ExcelDriver implements Driver {
     await this.repairHeader();
   }
 
-  /** Files written by an older version have fewer columns: bring the header row up to date. */
+  /** Files written by an older version have fewer columns: bring the header rows up to date. */
   private async repairHeader(): Promise<void> {
-    const res = await this.call<{ values: unknown[][] }>(`${this.ws('Expenses')}/range(address='A1:I1')?$select=values`);
-    const current = (res.values?.[0] ?? []).map(String);
-    if (EXPENSE_HEADER.some((h, i) => current[i] !== h)) {
-      await this.write('Expenses', 'A1:I1', [EXPENSE_HEADER], EXPENSE_FORMATS.map(() => '@'));
+    const sheets = [
+      ['Expenses', 'A1:I1', EXPENSE_HEADER],
+      ['Categories', 'A1:F1', CATEGORY_HEADER],
+    ] as const;
+    for (const [sheet, address, header] of sheets) {
+      const res = await this.call<{ values: unknown[][] }>(`${this.ws(sheet)}/range(address='${address}')?$select=values`);
+      const current = (res.values?.[0] ?? []).map(String);
+      if (header.some((h, i) => current[i] !== h)) await this.write(sheet, address, [header], header.map(() => '@'));
     }
   }
 
@@ -105,6 +109,8 @@ export class ExcelDriver implements Driver {
           { width: 8, style: Style.Text },
           { width: 10, style: Style.Text },
           { width: 80, style: Style.Text },
+          { width: 16, style: Style.Text },
+          { width: 60, style: Style.Text },
         ],
       },
       {
@@ -243,7 +249,7 @@ export class ExcelDriver implements Driver {
 
   async writeCategories(rows: Row[]): Promise<void> {
     const before = await this.dataRows('Categories');
-    await this.replaceRows('Categories', 'D', before, rows.map((r) => r.map(String)), CATEGORY_FORMATS);
+    await this.replaceRows('Categories', 'F', before, rows.map((r) => r.map(String)), CATEGORY_FORMATS);
   }
 
   async writeBudgets(rows: Row[]): Promise<void> {

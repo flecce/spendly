@@ -52,11 +52,12 @@ function keywordHits(note: string, words: string[], keyword: string): boolean {
   return words.some((w) => w === keyword || (keyword.length >= 5 && w.startsWith(keyword)));
 }
 
+/** The ID of the category that best fits the note, or null. */
 export function detectCategory(note: string, categories: Category[], model: Model): string | null {
   const n = normalize(note);
   if (!n) return null;
   const words = n.split(' ');
-  const known = new Set(categories.map((c) => c.name));
+  const known = new Set(categories.map((c) => c.id));
   const scores = new Map<string, number>();
   const add = (cat: string, points: number) => {
     if (known.has(cat)) scores.set(cat, (scores.get(cat) ?? 0) + points);
@@ -67,7 +68,7 @@ export function detectCategory(note: string, categories: Category[], model: Mode
   for (const c of categories) {
     for (const raw of c.keywords) {
       const k = normalize(raw);
-      if (k && keywordHits(n, words, k)) add(c.name, 3 * k.length);
+      if (k && keywordHits(n, words, k)) add(c.id, 3 * k.length);
     }
   }
 

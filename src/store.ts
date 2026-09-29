@@ -1,7 +1,7 @@
 import { cacheKey, type Account } from './auth/session';
 import { readJson } from './auth/util';
-import type { Data } from './backup';
 import { learn, type Model } from './categorize';
+import { withIds } from './defaults';
 import { AuthError, HttpError } from './drivers/http';
 import type { Driver } from './drivers/types';
 import { isCurrency, mainCurrency, today } from './format';
@@ -21,6 +21,7 @@ import {
   type Budget,
   type BudgetEntry,
   type Category,
+  type Data,
   type Expense,
   type Row,
   type Settings,
@@ -40,6 +41,8 @@ type Op =
   | { t: 'categories'; rows: Row[] }
   | { t: 'budgets'; rows: Row[] }
   | { t: 'settings'; rows: Row[] }
+  | { t: 'relabel'; map: Record<string, string> }
+  /** Queued by versions that referenced categories by name. */
   | { t: 'rename'; from: string; to: string };
 
 export type SyncState = 'idle' | 'syncing' | 'offline' | 'auth' | 'error';
@@ -108,13 +111,24 @@ class Store {
     this.key = cacheKey(account);
     const cache = readJson<Cache>(this.key);
     if (cache) {
-      this.expenses = cache.expenses;
-      this.categories = cache.categories;
-      this.budgets = cache.budgets ?? [];
-      this.settings = cache.settings ?? {};
+      // A cache from an older version has categories without IDs: the file gets fixed on the next refresh.
+      const { data } = withIds({
+        expenses: cache.expenses,
+        categories: cache.categories.map((c) => ({ ...c, id: c.id ?? '', names: c.names ?? {} })),
+        budgets: cache.budgets ?? [],
+        settings: cache.settings ?? {},
+      });
+      this.set(data);
       this.queue = cache.queue ?? [];
       this.ready = true;
     }
+  }
+
+  private set(d: Data): void {
+    this.expenses = d.expenses;
+    this.categories = d.categories;
+    this.budgets = d.budgets;
+    this.settings = d.settings;
   }
 
   private persist(): void {
@@ -175,15 +189,23 @@ class Store {
       const data = await this.driver.read();
       this.lastPull = Date.now();
       // A local change happened while reading: keep it, the next refresh will catch up.
-      if (version === this.version && !this.queue.length) {
-        this.expenses = rowsToExpenses(data.expenses);
-        this.categories = rowsToCategories(data.categories);
-        this.settings = rowsToSettings(data.settings);
-        this.budgets = withLegacyBudget(rowsToBudgets(data.budgets), this.settings);
-        this.ready = true;
-        this.changed();
-      }
+      if (version !== this.version || this.queue.length) return this.setSync('idle');
+      const settings = rowsToSettings(data.settings);
+      const migration = withIds({
+        expenses: rowsToExpenses(data.expenses),
+        categories: rowsToCategories(data.categories),
+        budgets: withLegacyBudget(rowsToBudgets(data.budgets), settings),
+        settings,
+      });
+      this.set(migration.data);
+      this.ready = true;
       this.setSync('idle');
+      // Categories referenced by name (older file, or typed in the spreadsheet): switch the file to IDs.
+      if (migration.categories) this.queue.push({ t: 'categories', rows: this.categories.map(categoryToRow) });
+      if (Object.keys(migration.relabel).length) this.queue.push({ t: 'relabel', map: migration.relabel });
+      if (migration.budgets) this.queue.push({ t: 'budgets', rows: this.budgets.map(budgetToRow) });
+      this.changed();
+      if (this.queue.length) void this.flush();
     } catch (e) {
       this.fail(e);
     }
@@ -245,21 +267,24 @@ class Store {
         return d.writeBudgets(op.rows);
       case 'settings':
         return d.writeSettings(op.rows);
-      case 'rename': {
-        const { expenses } = await d.read();
-        const categories = expenses.map((r) => {
-          const cat = String(r[COL.category] ?? '').trim();
-          return cat === op.from ? op.to : cat;
-        });
-        const tags = expenses.map((r) =>
-          splitKeywords(String(r[COL.tags] ?? ''))
-            .map((tag) => (tag === op.from ? op.to : tag))
-            .join(', '),
-        );
-        if (categories.includes(op.to)) await d.writeExpenseCategories(categories);
-        if (tags.some((t) => t.includes(op.to))) await d.writeExpenseTags(tags);
-      }
+      case 'rename':
+        return this.relabel(d, { [op.from]: op.to });
+      case 'relabel':
+        return this.relabel(d, op.map);
     }
+  }
+
+  /** Replaces category values (names → IDs) in the Category and Tags columns of the Expenses sheet. */
+  private async relabel(d: Driver, map: Record<string, string>): Promise<void> {
+    const { expenses } = await d.read();
+    const swap = (v: string) => map[v] ?? v;
+    const cell = (v: unknown) => String(v ?? '').trim();
+    const categories = expenses.map((r) => cell(r[COL.category]));
+    const tags = expenses.map((r) => cell(r[COL.tags]));
+    const newCategories = categories.map(swap);
+    const newTags = tags.map((v) => splitKeywords(v).map(swap).join(', '));
+    if (newCategories.some((v, i) => v !== categories[i])) await d.writeExpenseCategories(newCategories);
+    if (newTags.some((v, i) => v !== splitKeywords(tags[i]).join(', '))) await d.writeExpenseTags(newTags);
   }
 
   private fail(e: unknown): void {
@@ -315,31 +340,18 @@ class Store {
     return e.group ? this.expenses.filter((x) => x.group === e.group) : [e];
   }
 
-  /** Creates (previous = null) or updates a category; renaming also renames it on existing expenses. */
-  saveCategory(previous: string | null, c: Category): void {
-    if (previous === null) this.categories.push(c);
-    else {
-      this.categories = this.categories.map((x) => (x.name === previous ? c : x));
-      if (previous !== c.name) {
-        this.expenses = this.expenses.map((e) => ({
-          ...e,
-          category: e.category === previous ? c.name : e.category,
-          tags: e.tags.map((tag) => (tag === previous ? c.name : tag)),
-        }));
-        this.queue.push({ t: 'rename', from: previous, to: c.name });
-        if (this.budgets.some((b) => b.category === previous)) {
-          this.budgets = this.budgets.map((b) => (b.category === previous ? { ...b, category: c.name } : b));
-          this.queue.push({ t: 'budgets', rows: this.budgets.map(budgetToRow) });
-        }
-      }
-    }
+  /** Creates or updates a category (matched by ID). Expenses reference the ID, so a rename touches nothing else. */
+  saveCategory(c: Category): void {
+    const i = this.categories.findIndex((x) => x.id === c.id);
+    if (i < 0) this.categories.push(c);
+    else this.categories[i] = c;
     this.enqueue({ t: 'categories', rows: this.categories.map(categoryToRow) });
   }
 
-  deleteCategory(name: string): void {
-    this.categories = this.categories.filter((c) => c.name !== name);
-    if (this.budgets.some((b) => b.category === name)) {
-      this.budgets = this.budgets.filter((b) => b.category !== name);
+  deleteCategory(id: string): void {
+    this.categories = this.categories.filter((c) => c.id !== id);
+    if (this.budgets.some((b) => b.category === id)) {
+      this.budgets = this.budgets.filter((b) => b.category !== id);
       this.queue.push({ t: 'budgets', rows: this.budgets.map(budgetToRow) });
     }
     this.enqueue({ t: 'categories', rows: this.categories.map(categoryToRow) });
@@ -359,8 +371,8 @@ class Store {
   categoryBudgets(month: string): Map<string, Budget> {
     const out = new Map<string, Budget>();
     for (const c of this.categories) {
-      const b = this.budgetFor(month, c.name);
-      if (b) out.set(c.name, b);
+      const b = this.budgetFor(month, c.id);
+      if (b) out.set(c.id, b);
     }
     return out;
   }
@@ -412,8 +424,8 @@ class Store {
     void this.flush();
   }
 
-  category(name: string): Category | undefined {
-    return this.categories.find((c) => c.name === name);
+  category(id: string): Category | undefined {
+    return this.categories.find((c) => c.id === id);
   }
 }
 

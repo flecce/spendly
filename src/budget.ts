@@ -5,7 +5,7 @@ import { icon, type IconName } from './icons';
 import { ensureRates, toMain } from './rates';
 import type { Budget, Expense } from './schema';
 import { store } from './store';
-import { $, openSheet, toast } from './ui';
+import { $, categoryLabel, openSheet, toast } from './ui';
 
 /**
  * Monthly budget for the current month. Besides over/under, spending is compared with
@@ -199,7 +199,7 @@ export function openBudgetEditor(category = ''): void {
   const dialog = openSheet(html`
     <form class="sheet-body budget-form" novalidate>
       <div class="sheet-head">
-        <h2>${category || t('monthlyBudget')}</h2>
+        <h2>${category ? categoryLabel(category) : t('monthlyBudget')}</h2>
         <button type="button" class="icon-btn" data-action="close" aria-label="${t('close')}">${icon('x')}</button>
       </div>
       <p class="hint">${category ? t('categoryBudgetHint') : t('budgetHint')}</p>
