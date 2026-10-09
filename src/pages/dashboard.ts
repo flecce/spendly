@@ -68,13 +68,15 @@ interface Bucket {
   key: string;
   tick: string;
   tip: string;
-  value: number;
+  spent: number;
+  income: number;
   /** Budget of the month this bucket covers (monthly grouping only). */
   budget: number | null;
 }
 
 const weekStart = (iso: string): string => addDays(iso, -((fromIso(iso).getDay() + 6) % 7));
 
+/** Spending and income of each slice of the period. */
 function buckets(items: Expense[], value: (e: Expense) => number, from: string, to: string, unit: Unit): Bucket[] {
   const keyOf = (iso: string) =>
     unit === 'day' ? iso : unit === 'week' ? (weekStart(iso) < from ? from : weekStart(iso)) : iso.slice(0, 7);
@@ -92,13 +94,15 @@ function buckets(items: Expense[], value: (e: Expense) => number, from: string, 
         : unit === 'week'
           ? { tick: short(day), tip: t('weekOf', { d: short(day) }) }
           : { tick: formatDate(day, { month: 'short' }), tip: formatDate(day, { month: 'long', year: 'numeric' }) };
-    const b: Bucket = { key, value: 0, budget, ...label };
+    const b: Bucket = { key, spent: 0, income: 0, budget, ...label };
     list.push(b);
     index.set(key, b);
   }
   for (const e of items) {
     const b = index.get(keyOf(e.date));
-    if (b) b.value += value(e);
+    if (!b) continue;
+    if (isSpending(e)) b.spent += value(e);
+    else b.income += value(e);
   }
   return list;
 }
@@ -111,15 +115,23 @@ function niceMax(v: number): number {
 
 const CHART = { height: 180, top: 10, bottom: 26, left: 52, right: 6 };
 
+/** Whether the chart pairs an income bar with each spending bar. */
+const showsIncome = (bs: Bucket[]): boolean => bs.some((b) => b.income > 0);
+
 function chartSvg(bs: Bucket[], width: number): string {
   const { height, top, bottom, left, right } = CHART;
   const plotW = Math.max(40, width - left - right);
   const plotH = height - top - bottom;
-  const max = niceMax(Math.max(0, ...bs.map((b) => Math.max(b.value, b.budget ?? 0))));
+  const max = niceMax(Math.max(0, ...bs.map((b) => Math.max(b.spent, b.income, b.budget ?? 0))));
   const band = plotW / bs.length;
-  const barW = Math.max(2, Math.min(24, band - 2));
+  const paired = showsIncome(bs);
+  // Side by side when there is income: spending on the left, income on the right, `gap` apart.
+  const gap = 2;
+  const barW = paired ? Math.max(2, Math.min(12, (band - 2 - gap) / 2)) : Math.max(2, Math.min(24, band - 2));
+  const groupW = paired ? barW * 2 + gap : barW;
   const base = top + plotH;
   const y = (v: number) => base - (v / max) * plotH;
+  const spentX = (i: number) => left + i * band + (band - groupW) / 2;
 
   const grid = [0, max / 2, max]
     .map(
@@ -129,20 +141,24 @@ function chartSvg(bs: Bucket[], width: number): string {
     )
     .join('');
 
+  const bar = (cls: string, i: number, v: number, x: number) => {
+    if (v <= 0) return '';
+    const h = Math.max(2, (v / max) * plotH);
+    const r = Math.min(4, barW / 2, h);
+    // Rounded data end, square at the baseline.
+    return `<path class="${cls}" data-i="${i}" d="M${x},${base}V${base - h + r}a${r},${r} 0 0 1 ${r},${-r}H${x + barW - r}a${r},${r} 0 0 1 ${r},${r}V${base}Z"/>`;
+  };
   const bars = bs
-    .map((b, i) => {
-      if (b.value <= 0) return '';
-      const h = Math.max(2, (b.value / max) * plotH);
-      const x = left + i * band + (band - barW) / 2;
-      const r = Math.min(4, barW / 2, h);
-      // Rounded data end, square at the baseline.
-      return `<path class="bar" data-i="${i}" d="M${x},${base}V${base - h + r}a${r},${r} 0 0 1 ${r},${-r}H${x + barW - r}a${r},${r} 0 0 1 ${r},${r}V${base}Z"/>`;
-    })
+    .map((b, i) => bar('bar', i, b.spent, spentX(i)) + (paired ? bar('bar bar-income', i, b.income, spentX(i) + barW + gap) : ''))
     .join('');
 
-  // A dashed marker over each bar at the budget of that month.
+  // A dashed marker at the budget of that month: across the band, or just over the spending bar when income sits beside it.
   const budgets = bs
-    .map((b, i) => (b.budget ? `<line class="budget-line" x1="${left + i * band + 1}" x2="${left + (i + 1) * band - 1}" y1="${y(b.budget)}" y2="${y(b.budget)}"/>` : ''))
+    .map((b, i) => {
+      if (!b.budget) return '';
+      const [x1, x2] = paired ? [spentX(i) - gap, spentX(i) + barW + gap] : [left + i * band + 1, left + (i + 1) * band - 1];
+      return `<line class="budget-line" x1="${x1}" x2="${x2}" y1="${y(b.budget)}" y2="${y(b.budget)}"/>`;
+    })
     .join('');
 
   const tickIdx = [...new Set([0, Math.floor((bs.length - 1) / 2), bs.length - 1])];
@@ -238,6 +254,8 @@ export function mountDashboard(view: HTMLElement): () => void {
     const listed = sortByDateDesc(scoped, store.expenses);
     const byDay = new Map<string, Expense[]>();
     for (const e of listed) byDay.set(e.date, [...(byDay.get(e.date) ?? []), e]);
+    const chartBuckets = buckets(scoped, value, from, to, unit);
+    const chartIncome = showsIncome(chartBuckets);
 
     view.innerHTML = html`
       ${budgetCard(currentBudgetStatus())}
@@ -288,7 +306,13 @@ export function mountDashboard(view: HTMLElement): () => void {
           <section class="card chart-card">
             <div class="section-head">
               <h2>${t('overTime')}</h2>
-              ${unit === 'month' && store.budgets.length ? html`<span class="legend">${icon('minus')}${t('budget')}</span>` : ''}
+              <span class="legends">
+                ${chartIncome
+                  ? html`<span class="legend"><span class="legend-key"></span>${t('expenses')}</span>
+                      <span class="legend"><span class="legend-key income"></span>${t('income')}</span>`
+                  : ''}
+                ${unit === 'month' && store.budgets.length ? html`<span class="legend">${icon('minus')}${t('budget')}</span>` : ''}
+              </span>
             </div>
             <div class="chart" id="chart"><div class="chart-tip" role="status" hidden></div></div>
           </section>
@@ -316,13 +340,14 @@ export function mountDashboard(view: HTMLElement): () => void {
       </div>
     `.value;
 
-    mountChart(buckets(spending, value, from, to, unit));
+    mountChart(chartBuckets);
   }
 
   function mountChart(bs: Bucket[]): void {
     const box = $('#chart', view);
     const tip = $('.chart-tip', box);
     let active = -1;
+    const paired = showsIncome(bs);
 
     const draw = () => {
       box.querySelector('svg')?.remove();
@@ -343,10 +368,15 @@ export function mountDashboard(view: HTMLElement): () => void {
       cursor.setAttribute('visibility', 'visible');
       tip.replaceChildren();
       const amount = document.createElement('strong');
-      amount.textContent = money(bs[active].value);
+      amount.textContent = money(bs[active].spent);
       const label = document.createElement('span');
       label.textContent = bs[active].tip;
       tip.append(amount, label);
+      if (paired) {
+        const line = document.createElement('span');
+        line.textContent = `${t('income')} ${money(bs[active].income)}`;
+        tip.append(line);
+      }
       const budget = bs[active].budget;
       if (budget) {
         const line = document.createElement('span');

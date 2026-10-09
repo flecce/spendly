@@ -1427,6 +1427,25 @@ dialog.sheet::backdrop {
   color: var(--text-2);
 }
 
+.legends {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 12px;
+}
+
+/* Colour key of a chart series. */
+.legend-key {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--series);
+}
+
+.legend-key.income {
+  background: var(--good);
+}
+
 .custom-range {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1632,6 +1651,10 @@ dialog.sheet::backdrop {
 .chart .bar {
   fill: var(--series);
   transition: opacity 0.12s;
+}
+
+.chart .bar-income {
+  fill: var(--good);
 }
 
 /* Budget of that month, drawn over its bar. */

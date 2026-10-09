@@ -63,7 +63,7 @@ const en = {
   totalSpent: 'Total spent',
   expensesCount: 'Expenses',
   perDay: 'Daily average',
-  overTime: 'Spending over time',
+  overTime: 'Over time',
   byCategory: 'By category',
   expenses: 'Expenses',
   noData: 'No expenses in this period.',
