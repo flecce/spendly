@@ -1,4 +1,4 @@
-import { isSpending } from './budget';
+import { balanceClass, isSpending } from './budget';
 import { themedColor } from './defaults';
 import { formatDate, money } from './format';
 import { html, type SafeHtml } from './html';
@@ -176,7 +176,7 @@ export function openSankey(items: [Expense, number][], from: string, to: string)
       <div class="stats sankey-stats">
         <div><span class="label">${t('income')}</span><strong class="income">${money(f.income)}</strong></div>
         <div><span class="label">${t('totalSpent')}</span><strong>${money(f.spent)}</strong></div>
-        <div><span class="label">${t('balance')}</span><strong class="${balance >= 0 ? 'income' : ''}">${money(balance)}</strong></div>
+        <div><span class="label">${t('balance')}</span><strong class="${balanceClass(balance)}">${money(balance)}</strong></div>
       </div>
       ${f.total > 0 ? html`<div class="sankey-box"></div>` : html`<p class="empty">${t('noData')}</p>`}
     </div>

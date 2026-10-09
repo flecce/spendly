@@ -43,6 +43,9 @@ const NEAR_LIMIT = 0.9;
 /** Money out only: income never eats into a budget. */
 export const isSpending = (e: Expense): boolean => e.type !== 'income';
 
+/** Colour of a balance (income − spending): green in credit, red when spending outran income. */
+export const balanceClass = (balance: number): string => (balance >= 0 ? 'income' : 'negative');
+
 export function budgetStatus(expenses: Expense[], budget: Budget, day = today(), category = ''): BudgetStatus {
   const month = day.slice(0, 7);
   const [y, m, d] = day.split('-').map(Number);
@@ -165,7 +168,7 @@ export function budgetCard(s: BudgetStatus | null): SafeHtml {
     ${s.income > 0
       ? html`<dl class="budget-balance">
           <div><dt>${t('income')}</dt><dd class="income">${money(s.income)}</dd></div>
-          <div><dt>${t('balance')}</dt><dd class="${s.income - s.spent >= 0 ? 'income' : ''}">${money(s.income - s.spent)}</dd></div>
+          <div><dt>${t('balance')}</dt><dd class="${balanceClass(s.income - s.spent)}">${money(s.income - s.spent)}</dd></div>
         </dl>`
       : ''}
   </section>`;
@@ -184,7 +187,7 @@ export function budgetStrip(s: BudgetStatus | null): SafeHtml {
     </span>
     ${meter(s)}
     <span class="budget-state">${icon(STATE_ICON[s.state])}<span>${detail}</span>${s.income > 0
-      ? html`<span class="budget-strip-balance">${t('balance')} <strong class="${s.income - s.spent >= 0 ? 'income' : ''}">${money(s.income - s.spent)}</strong></span>`
+      ? html`<span class="budget-strip-balance">${t('balance')} <strong class="${balanceClass(s.income - s.spent)}">${money(s.income - s.spent)}</strong></span>`
       : ''}</span>
   </a>`;
 }

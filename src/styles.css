@@ -1073,6 +1073,12 @@ dialog.sheet::backdrop {
   color: var(--good-text);
 }
 
+/* A balance in the red: spending outran income. */
+.negative,
+.stats strong.negative {
+  color: var(--danger);
+}
+
 .type-toggle {
   display: flex;
   gap: 8px;
@@ -2029,6 +2035,10 @@ dialog.sheet::backdrop {
 
 .budget-strip-balance strong.income {
   color: var(--good-text);
+}
+
+.budget-strip-balance strong.negative {
+  color: var(--danger);
 }
 
 .budget-link {

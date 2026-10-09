@@ -1,4 +1,4 @@
-import { budgetCard, currentBudgetStatus, isSpending, openBudgetEditor } from '../budget';
+import { balanceClass, budgetCard, currentBudgetStatus, isSpending, openBudgetEditor } from '../budget';
 import { themedColor } from '../defaults';
 import { addDays, daysBetween, formatDate, fromIso, money, moneyCompact, today } from '../format';
 import { html, type SafeHtml } from '../html';
@@ -295,7 +295,7 @@ export function mountDashboard(view: HTMLElement): () => void {
               ${months > 1 ? html`<div><span class="label">${t('perMonth')}</span><strong>${money(total / months)}</strong></div>` : ''}
               ${incomeTotal > 0
                 ? html`<div><span class="label">${t('income')}</span><strong class="income">${money(incomeTotal)}</strong></div>
-                    <div><span class="label">${t('balance')}</span><strong class="${incomeTotal - total >= 0 ? 'income' : ''}">${money(incomeTotal - total)}</strong></div>`
+                    <div><span class="label">${t('balance')}</span><strong class="${balanceClass(incomeTotal - total)}">${money(incomeTotal - total)}</strong></div>`
                 : ''}
             </div>
             ${known.length
