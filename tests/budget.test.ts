@@ -14,6 +14,7 @@ const exp = (date: string, amount: number, extra: Partial<Expense> = {}): Expens
   type: 'expense',
   group: '',
   tags: [],
+  recurring: '',
   ...extra,
 });
 const budget = (amount: number) => ({ amount, currency: mainCurrency });

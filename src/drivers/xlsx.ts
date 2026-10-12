@@ -13,7 +13,7 @@ export interface SheetSpec {
 }
 
 // Indexes into <cellXfs> below.
-export const Style = { Header: 1, Text: 2, Date: 3, Amount: 4 } as const;
+export const Style = { General: 0, Header: 1, Text: 2, Date: 3, Amount: 4 } as const;
 export type Style = (typeof Style)[keyof typeof Style];
 
 const XML_HEAD = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';

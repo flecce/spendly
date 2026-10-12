@@ -19,7 +19,18 @@ import { html } from '../html';
 import { t } from '../i18n';
 import { icon } from '../icons';
 import { ensureRates, onRatesChange, toMain } from '../rates';
-import { categoryName, newId, sortByDateDesc, type ExpenseType } from '../schema';
+import {
+  dueOccurrences,
+  lastDate,
+  nextDate,
+  progressLabel,
+  recurringSummary,
+  REPEAT_PRESETS,
+  repeatLabel,
+  sentence,
+  shortDate,
+} from '../recurring';
+import { categoryName, newId, sortByDateDesc, type ExpenseType, type Recurring, type RepeatUnit } from '../schema';
 import { store } from '../store';
 import { $, categoryLabel, confirmDialog, expenseRow, openSheet, toast } from '../ui';
 
@@ -50,28 +61,52 @@ function goBack(): void {
   else location.hash = '#/add';
 }
 
-/** Main page: note, total and category (auto-detected from the note). Also the editor for an existing expense. */
-export function mountAdd(view: HTMLElement, editId?: string): () => void {
-  const editing = editId ? store.expenses.find((e) => e.id === editId) : undefined;
-  if (editId && !editing) {
-    view.innerHTML = html`<div class="empty card"><p>${t('expenseNotFound')}</p><a class="btn" href="#/add">${t('newExpense')}</a></div>`.value;
+/** "1 month": a frequency as the value of an option. */
+const repeatValue = (every: number, unit: RepeatUnit): string => `${every} ${unit}`;
+
+/** What the entry page edits: nothing (a new entry), an expense, or a recurring expense. */
+export interface EntryTarget {
+  expense?: string;
+  recurring?: string;
+}
+
+/**
+ * Main page: note, total and category (auto-detected from the note); a new entry can repeat.
+ * Also the editor for an existing expense and for a recurring one.
+ */
+export function mountAdd(view: HTMLElement, target: EntryTarget = {}): () => void {
+  const editing = target.expense ? store.expenses.find((e) => e.id === target.expense) : undefined;
+  const schedule = target.recurring ? store.recurringById(target.recurring) : undefined;
+  if ((target.expense && !editing) || (target.recurring && !schedule)) {
+    view.innerHTML = html`<div class="empty card"><p>${target.recurring ? t('recurringNotFound') : t('expenseNotFound')}</p><a class="btn" href="#/add">${t('newExpense')}</a></div>`.value;
     return () => {};
+  }
+  /** The recurring expense that added the expense being edited: it can be changed or deleted from here. */
+  let parent = editing?.recurring ? store.recurringById(editing.recurring) : undefined;
+  const source = editing ?? schedule;
+  const canRepeat = !editing;
+  // The frequency of the recurrence being edited is offered even when it isn't one of the presets.
+  const frequencies = [...REPEAT_PRESETS];
+  if (schedule && !frequencies.some(([every, unit]) => every === schedule.every && unit === schedule.unit)) {
+    frequencies.push([schedule.every, schedule.unit]);
   }
 
   /** Chosen categories: the first one carries the amount, the rest are tags. */
-  let picked: string[] = editing ? [editing.category, ...editing.tags].filter(Boolean) : [];
-  let manual = Boolean(editing); // once the user picks a category, stop guessing
+  let picked: string[] = source ? [source.category, ...source.tags].filter(Boolean) : [];
+  let manual = Boolean(source); // once the user picks a category, stop guessing
   let auto = false;
-  let type: ExpenseType = editing?.type ?? 'expense';
+  let type: ExpenseType = source?.type ?? 'expense';
   /** Set when one amount is shared between categories: each part becomes its own row. */
   let split: Part[] | null = null;
-  const initialCurrency = editing?.currency ?? lastCurrency();
+  const initialCurrency = source?.currency ?? lastCurrency();
 
   view.innerHTML = html`
-    ${editing ? '' : html`<div id="budget-slot"></div>`}
+    ${source ? '' : html`<div id="budget-slot"></div>`}
     <form class="card entry" novalidate autocomplete="off">
-      <h1 class="entry-title">${editing ? t('editExpense') : t('newExpense')}</h1>
+      <h1 class="entry-title">${schedule ? t('editRecurring') : editing ? t('editExpense') : t('newExpense')}</h1>
+      ${schedule ? html`<p class="hint">${t('recurringFutureHint')}</p>` : ''}
       ${editing?.group ? html`<p class="hint split-note">${icon('split')}${t('splitPartOf')}</p>` : ''}
+      <div class="recurring-note" hidden></div>
       <div class="type-toggle" role="group" aria-label="${t('typeExpense')} / ${t('typeIncome')}">
         <button type="button" class="chip" data-type="expense" aria-pressed="${String(type === 'expense')}">${t('typeExpense')}</button>
         <button type="button" class="chip" data-type="income" aria-pressed="${String(type === 'income')}">${t('typeIncome')}</button>
@@ -79,7 +114,7 @@ export function mountAdd(view: HTMLElement, editId?: string): () => void {
       <label class="field">
         <span class="label">${t('note')}</span>
         <input name="note" type="text" maxlength="200" required enterkeyhint="next" placeholder="${t('notePlaceholder')}"
-          aria-describedby="note-error" value="${editing?.note ?? ''}" />
+          aria-describedby="note-error" value="${source?.note ?? ''}" />
         <span class="field-error" id="note-error" aria-live="polite"></span>
       </label>
       <div class="field">
@@ -89,7 +124,7 @@ export function mountAdd(view: HTMLElement, editId?: string): () => void {
             ${CURRENCIES.map((c) => html`<option value="${c}" title="${currencyName(c)}" ${c === initialCurrency ? html`selected` : ''}>${c}</option>`)}
           </select>
           <input id="amount" name="amount" type="text" inputmode="decimal" enterkeyhint="done" placeholder="0" aria-describedby="amount-error amount-converted"
-            value="${editing ? amountInputValue(editing.amount) : ''}" />
+            value="${source ? amountInputValue(source.amount) : ''}" />
         </span>
         <span class="amount-converted" id="amount-converted" aria-live="polite"></span>
         <span class="field-error" id="amount-error" aria-live="polite"></span>
@@ -97,7 +132,7 @@ export function mountAdd(view: HTMLElement, editId?: string): () => void {
       <div class="field">
         <span class="label" id="cat-label">${t('category')}
           <span class="auto-badge" title="${t('autoHint')}" hidden>${icon('sparkle')}${t('auto')}</span>
-          ${editing ? '' : html`<button type="button" class="link-inline" data-action="split">${icon('split')}${t('split')}</button>`}
+          ${source ? '' : html`<button type="button" class="link-inline" data-action="split">${icon('split')}${t('split')}</button>`}
         </span>
         <div class="chips" role="group" aria-labelledby="cat-label"></div>
         <p class="hint cat-hint" hidden>${t('mainCategoryHint')}</p>
@@ -110,19 +145,44 @@ export function mountAdd(view: HTMLElement, editId?: string): () => void {
           <button type="button" class="chip" data-day="-1">${t('yesterday')}</button>
           <label class="chip date-chip">
             ${icon('calendar')}<span class="date-text"></span>${icon('chevronDown', 'muted')}
-            <input type="date" name="date" required value="${editing?.date ?? today()}" aria-label="${t('date')}" />
+            <input type="date" name="date" required value="${editing?.date ?? schedule?.start ?? today()}" aria-label="${t('date')}" />
           </label>
         </div>
       </div>
+      ${canRepeat
+        ? html`<div class="field repeat-field">
+            <div class="repeat-row">
+              <label class="field grow">
+                <span class="label">${icon('repeat')}${t('repeat')}</span>
+                <select name="repeat">
+                  ${schedule ? '' : html`<option value="">${t('repeatNever')}</option>`}
+                  ${frequencies.map(([every, unit]) => {
+                    const selected = schedule?.every === every && schedule.unit === unit;
+                    return html`<option value="${repeatValue(every, unit)}" ${selected ? html`selected` : ''}>${repeatLabel(every, unit)}</option>`;
+                  })}
+                </select>
+              </label>
+              <label class="field repeat-times">
+                <span class="label">${t('repeatTimes')}</span>
+                <input name="times" type="text" inputmode="numeric" maxlength="4" placeholder="${t('repeatForever')}"
+                  aria-describedby="times-error" value="${schedule?.count || ''}" />
+              </label>
+            </div>
+            <span class="field-error" id="times-error" aria-live="polite"></span>
+            <p class="hint repeat-summary" aria-live="polite"></p>
+          </div>`
+        : ''}
       <button class="btn primary save" type="submit">${icon('check')}${t('save')}</button>
-      ${editing
+      ${source
         ? html`<div class="entry-edit-actions">
             <button type="button" class="btn ghost" data-action="cancel">${t('cancel')}</button>
-            <button type="button" class="btn ghost danger-text" data-action="delete">${icon('trash')}${t('delete')}</button>
+            ${schedule
+              ? html`<button type="button" class="btn ghost danger-text" data-action="delete-recurring">${icon('trash')}${t('deleteRecurring')}</button>`
+              : html`<button type="button" class="btn ghost danger-text" data-action="delete">${icon('trash')}${t('delete')}</button>`}
           </div>`
         : ''}
     </form>
-    ${editing
+    ${source
       ? ''
       : html`<section class="recent">
           <div class="section-head"><h2>${t('recent')}</h2><a href="#/expenses">${t('seeAll')}</a></div>
@@ -143,6 +203,72 @@ export function mountAdd(view: HTMLElement, editId?: string): () => void {
   const autoBadge = $('.auto-badge', form);
   const noteError = $('#note-error', form);
   const amountError = $('#amount-error', form);
+  const recurringNote = $('.recurring-note', form);
+  // Only on a new entry and on a recurring one.
+  const repeatField = form.querySelector<HTMLElement>('.repeat-field');
+  const repeat = form.querySelector<HTMLSelectElement>('[name=repeat]');
+  const times = form.querySelector<HTMLInputElement>('[name=times]');
+  const timesError = form.querySelector<HTMLElement>('#times-error');
+
+  /** The chosen frequency, or null when the entry doesn't repeat. */
+  function frequency(): Pick<Recurring, 'every' | 'unit'> | null {
+    const [every, unit] = (repeat?.value ?? '').split(' ');
+    return unit ? { every: Number(every), unit: unit as RepeatUnit } : null;
+  }
+
+  /** How many times in all: 0 = no end, null = not a whole number. */
+  function timesValue(): number | null {
+    const value = times?.value.trim() ?? '';
+    if (!value) return 0;
+    return /^\d+$/.test(value) && Number(value) > 0 ? Number(value) : null;
+  }
+
+  /** The recurrence as the form describes it so far, or null when the entry doesn't repeat. */
+  function draft(): Recurring | null {
+    const f = frequency();
+    if (!f) return null;
+    const base = (schedule && store.recurringById(schedule.id)) ??
+      schedule ?? { id: '', note: '', amount: 0, currency: mainCurrency, category: '', tags: [], type, done: 0 };
+    return { ...base, ...f, start: toIsoDate(date.value) ?? today(), count: timesValue() ?? 0 };
+  }
+
+  /** The date becomes the first occurrence; below, when the last one falls and what gets recorded at once. */
+  function renderRepeat(): void {
+    if (!repeatField || !times) return;
+    const r = draft();
+    $('#date-label', form).textContent = r ? t('repeatStart') : t('date');
+    $('.repeat-times', repeatField).hidden = !r;
+    // One amount shared between categories doesn't repeat: splitting and repeating exclude each other.
+    const splitLink = form.querySelector<HTMLElement>('#cat-label [data-action=split]');
+    if (splitLink) splitLink.hidden = r !== null;
+    const summary = $('.repeat-summary', repeatField);
+    if (!r) {
+      summary.textContent = '';
+      return;
+    }
+    const next = nextDate(r);
+    const last = lastDate(r);
+    const past = dueOccurrences(r).filter((e) => e.date < today()).length;
+    summary.textContent = sentence([
+      schedule ? progressLabel(r) : '',
+      schedule ? (next ? t('recurringNext', { d: shortDate(next) }) : t('recurringEnded')) : '',
+      last ? t('repeatLast', { d: shortDate(last) }) : t('repeatNoEnd'),
+      past ? t('repeatPastDue', { n: past }) : '',
+    ]);
+  }
+
+  /** Editing an expense added by a recurrence: what the recurrence is, with links to change or delete it. */
+  function renderRecurringNote(): void {
+    recurringNote.hidden = !parent;
+    if (!parent) return;
+    recurringNote.innerHTML = html`
+      <p class="recurring-summary">${icon('repeat')}<span><strong>${t('recurringEntry')}</strong> · ${recurringSummary(parent)}</span></p>
+      <div class="recurring-actions">
+        <a class="btn small ghost" href="#/recurring/${encodeURIComponent(parent.id)}">${icon('pencil')}${t('editRecurring')}</a>
+        <button type="button" class="btn small ghost danger-text" data-action="delete-recurring">${icon('trash')}${t('deleteRecurring')}</button>
+      </div>
+      <p class="hint">${t('recurringThisOnly')}</p>`.value;
+  }
 
   /** Difference between the total and what the parts add up to (0 when they match or there's no split). */
   function splitGap(): number {
@@ -155,6 +281,7 @@ export function mountAdd(view: HTMLElement, editId?: string): () => void {
   function renderChips(): void {
     chips.hidden = split !== null;
     splitBox.hidden = split === null;
+    if (repeatField) repeatField.hidden = split !== null;
     if (split) {
       const gap = splitGap();
       splitBox.innerHTML = html`
@@ -224,6 +351,7 @@ export function mountAdd(view: HTMLElement, editId?: string): () => void {
     renderDate();
     if (currency.value !== mainCurrency) void ensureRates([currency.value], toIsoDate(date.value) ?? today());
     renderConversion();
+    renderRepeat();
     if (split) renderChips();
   }
 
@@ -264,6 +392,12 @@ export function mountAdd(view: HTMLElement, editId?: string): () => void {
   });
   currency.addEventListener('change', onCurrencyOrDate);
   date.addEventListener('change', onCurrencyOrDate);
+  repeat?.addEventListener('change', renderRepeat);
+  times?.addEventListener('input', () => {
+    if (timesError) timesError.textContent = '';
+    times.removeAttribute('aria-invalid');
+    renderRepeat();
+  });
   datePicks.addEventListener('click', (e) => {
     const day = (e.target as Element).closest<HTMLElement>('[data-day]')?.dataset.day;
     if (day === undefined) return;
@@ -319,12 +453,32 @@ export function mountAdd(view: HTMLElement, editId?: string): () => void {
       $('[data-action=split]', splitBox).focus();
       return;
     }
+    const recurrence = draft();
+    if (recurrence && times && timesError) {
+      const count = timesValue();
+      const problem =
+        count === null ? t('repeatTimesInvalid') : count && count < recurrence.done ? t('repeatTimesMin', { n: recurrence.done }) : '';
+      if (problem) {
+        timesError.textContent = problem;
+        times.setAttribute('aria-invalid', 'true');
+        times.focus();
+        return;
+      }
+    }
 
     const common = { date: toIsoDate(date.value) ?? today(), currency: currency.value, note: text, type };
     rememberCurrency(common.currency);
 
     const category = picked[0] ?? '';
     const tags = picked.slice(1);
+    const fields = { note: text, amount: value, currency: common.currency, category, tags, type };
+
+    if (schedule && recurrence) {
+      store.saveRecurring({ ...recurrence, ...fields });
+      toast(t('recurringSaved'));
+      goBack();
+      return;
+    }
 
     if (editing) {
       store.updateExpense({ ...editing, ...common, amount: value, category, tags });
@@ -333,13 +487,17 @@ export function mountAdd(view: HTMLElement, editId?: string): () => void {
       return;
     }
 
-    if (split) {
+    if (recurrence) {
+      // The occurrences already due (the first one, when it starts today) are added at once.
+      store.saveRecurring({ ...recurrence, ...fields, id: newId() });
+    } else if (split) {
       const group = newId();
-      store.addExpenses(split.map((p) => ({ id: newId(), ...common, group, tags: [], category: p.category, amount: p.amount })));
+      store.addExpenses(split.map((p) => ({ id: newId(), ...common, group, tags: [], category: p.category, amount: p.amount, recurring: '' })));
     } else {
-      store.addExpense({ id: newId(), ...common, group: '', tags, amount: value, category });
+      store.addExpense({ id: newId(), ...common, group: '', tags, amount: value, category, recurring: '' });
     }
-    announceSaved(value, common.currency, common.date);
+    if (recurrence && common.date > today()) toast(t('recurringScheduled', { d: shortDate(common.date) }));
+    else announceSaved(value, common.currency, common.date);
 
     form.reset();
     date.value = today();
@@ -350,6 +508,7 @@ export function mountAdd(view: HTMLElement, editId?: string): () => void {
     split = null;
     manual = auto = false;
     renderChips();
+    renderRepeat();
     // Desktop: ready for the next one. Phone: close the keyboard so the list is visible.
     if (finePointer.matches) note.focus();
     else (document.activeElement as HTMLElement | null)?.blur();
@@ -385,14 +544,23 @@ export function mountAdd(view: HTMLElement, editId?: string): () => void {
       toast(t('deleted'));
       goBack();
     }
+    const recurrence = schedule ?? parent;
+    if (action === 'delete-recurring' && recurrence) {
+      const name = recurrence.note || categoryLabel(recurrence.category);
+      if (!(await confirmDialog(t('confirmDeleteRecurring', { name }), t('delete')))) return;
+      store.deleteRecurring(recurrence.id);
+      toast(t('recurringDeleted'));
+      if (schedule) goBack();
+    }
   });
 
   renderChips();
   renderType();
   renderRecent();
   renderBudget();
+  renderRecurringNote();
   onCurrencyOrDate();
-  if (!editing && finePointer.matches) note.focus();
+  if (!source && finePointer.matches) note.focus();
 
   const offRates = onRatesChange(() => {
     renderConversion();
@@ -405,6 +573,9 @@ export function mountAdd(view: HTMLElement, editId?: string): () => void {
     else guess();
     renderRecent();
     renderBudget();
+    parent = editing?.recurring ? store.recurringById(editing.recurring) : undefined;
+    renderRecurringNote();
+    renderRepeat();
   });
   return () => {
     offRates();

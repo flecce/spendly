@@ -42,7 +42,7 @@ async function importBackup(text: string): Promise<void> {
   if (!backup) return toast(t('importInvalid'), 'error');
   const add = newInBackup(store.data, backup);
   if (isEmpty(add)) return toast(t('importNothing'));
-  const counts = { e: add.expenses.length, c: add.categories.length, b: add.budgets.length };
+  const counts = { e: add.expenses.length, c: add.categories.length, b: add.budgets.length, r: add.recurring.length };
   if (!(await confirmDialog(t('importAsk', counts), t('importConfirm')))) return;
   store.importData(add);
   void ensureRatesFor(store.expenses);

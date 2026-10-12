@@ -5,16 +5,19 @@ import { withIds } from './defaults';
 import { AuthError, HttpError } from './drivers/http';
 import type { Driver } from './drivers/types';
 import { isCurrency, mainCurrency, today } from './format';
+import { dueOccurrences } from './recurring';
 import {
   budgetAt,
   budgetToRow,
   categoryToRow,
   COL,
   expenseToRow,
+  recurringToRow,
   rowsToBudgets,
   rowsToCategories,
   rowsToExpenses,
   rowIds,
+  rowsToRecurring,
   rowsToSettings,
   settingsToRows,
   splitKeywords,
@@ -23,6 +26,7 @@ import {
   type Category,
   type Data,
   type Expense,
+  type Recurring,
   type Row,
   type Settings,
 } from './schema';
@@ -36,11 +40,14 @@ import {
 type Op =
   | { t: 'add'; row: Row; tried?: boolean }
   | { t: 'import'; rows: Row[]; tried?: boolean }
+  /** Rows another device may have added already (occurrences of recurring expenses): only the missing ones are appended. */
+  | { t: 'ensure'; rows: Row[] }
   | { t: 'upsert'; id: string; row: Row }
   | { t: 'delete'; id: string }
   | { t: 'categories'; rows: Row[] }
   | { t: 'budgets'; rows: Row[] }
   | { t: 'settings'; rows: Row[] }
+  | { t: 'recurring'; rows: Row[] }
   | { t: 'relabel'; map: Record<string, string> }
   /** Queued by versions that referenced categories by name. */
   | { t: 'rename'; from: string; to: string };
@@ -53,6 +60,7 @@ interface Cache {
   categories: Category[];
   budgets?: BudgetEntry[];
   settings?: Settings;
+  recurring?: Recurring[];
   queue: Op[];
 }
 
@@ -71,6 +79,7 @@ class Store {
   categories: Category[] = [];
   budgets: BudgetEntry[] = [];
   settings: Settings = {};
+  recurring: Recurring[] = [];
   queue: Op[] = [];
   sync: SyncState = 'idle';
   /** True once there is data to show (from the cache or the file). */
@@ -113,10 +122,11 @@ class Store {
     if (cache) {
       // A cache from an older version has categories without IDs: the file gets fixed on the next refresh.
       const { data } = withIds({
-        expenses: cache.expenses,
+        expenses: cache.expenses.map((e) => ({ ...e, recurring: e.recurring ?? '' })),
         categories: cache.categories.map((c) => ({ ...c, id: c.id ?? '', names: c.names ?? {} })),
         budgets: cache.budgets ?? [],
         settings: cache.settings ?? {},
+        recurring: cache.recurring ?? [],
       });
       this.set(data);
       this.queue = cache.queue ?? [];
@@ -129,6 +139,7 @@ class Store {
     this.categories = d.categories;
     this.budgets = d.budgets;
     this.settings = d.settings;
+    this.recurring = d.recurring;
   }
 
   private persist(): void {
@@ -137,6 +148,7 @@ class Store {
       categories: this.categories,
       budgets: this.budgets,
       settings: this.settings,
+      recurring: this.recurring,
       queue: this.queue,
     };
     try {
@@ -196,6 +208,7 @@ class Store {
         categories: rowsToCategories(data.categories),
         budgets: withLegacyBudget(rowsToBudgets(data.budgets), settings),
         settings,
+        recurring: rowsToRecurring(data.recurring),
       });
       this.set(migration.data);
       this.ready = true;
@@ -204,6 +217,8 @@ class Store {
       if (migration.categories) this.queue.push({ t: 'categories', rows: this.categories.map(categoryToRow) });
       if (Object.keys(migration.relabel).length) this.queue.push({ t: 'relabel', map: migration.relabel });
       if (migration.budgets) this.queue.push({ t: 'budgets', rows: this.budgets.map(budgetToRow) });
+      // Only from fresh data: a stale copy could add again an occurrence deleted on another device.
+      if (this.addDue() || migration.recurring) this.queue.push(this.recurringOp());
       this.changed();
       if (this.queue.length) void this.flush();
     } catch (e) {
@@ -251,12 +266,11 @@ class Store {
       case 'add':
         // If a previous attempt may have reached the server, don't append a duplicate.
         return op.tried ? d.upsertExpense(String(op.row[COL.id]), op.row) : d.appendExpense(op.row);
-      case 'import': {
-        if (!op.tried) return d.appendExpenses(op.rows);
+      case 'import':
         // A previous attempt may have written part of the rows: add only the missing ones.
-        const present = new Set(rowIds((await d.read()).expenses));
-        return d.appendExpenses(op.rows.filter((r) => !present.has(String(r[COL.id]))));
-      }
+        return op.tried ? this.appendMissing(d, op.rows) : d.appendExpenses(op.rows);
+      case 'ensure':
+        return this.appendMissing(d, op.rows);
       case 'upsert':
         return d.upsertExpense(op.id, op.row);
       case 'delete':
@@ -267,11 +281,19 @@ class Store {
         return d.writeBudgets(op.rows);
       case 'settings':
         return d.writeSettings(op.rows);
+      case 'recurring':
+        return d.writeRecurring(op.rows);
       case 'rename':
         return this.relabel(d, { [op.from]: op.to });
       case 'relabel':
         return this.relabel(d, op.map);
     }
+  }
+
+  /** Appends the expense rows whose ID isn't in the file yet. */
+  private async appendMissing(d: Driver, rows: Row[]): Promise<void> {
+    const present = new Set(rowIds((await d.read()).expenses));
+    await d.appendExpenses(rows.filter((r) => !present.has(String(r[COL.id]))));
   }
 
   /** Replaces category values (names → IDs) in the Category and Tags columns of the Expenses sheet. */
@@ -395,9 +417,58 @@ class Store {
     }
   }
 
+  recurringById(id: string): Recurring | undefined {
+    return this.recurring.find((r) => r.id === id);
+  }
+
+  private recurringOp(): Op {
+    return { t: 'recurring', rows: this.recurring.map(recurringToRow) };
+  }
+
+  /**
+   * Adds the occurrences of recurring expenses whose day has come and moves their count on.
+   * Returns whether any recurrence changed (the Recurring sheet then needs writing).
+   */
+  private addDue(): boolean {
+    const have = new Set(this.expenses.map((e) => e.id));
+    const added: Expense[] = [];
+    let changed = false;
+    this.recurring = this.recurring.map((r) => {
+      const due = dueOccurrences(r);
+      if (!due.length) return r;
+      changed = true;
+      added.push(...due.filter((e) => !have.has(e.id)));
+      return { ...r, done: r.done + due.length };
+    });
+    if (added.length) {
+      this.expenses.push(...added);
+      this.queue.push({ t: 'ensure', rows: added.map(expenseToRow) });
+    }
+    return changed;
+  }
+
+  /**
+   * Creates or updates a recurring expense (matched by ID); the occurrences already due are added
+   * at once. Changes apply to the next occurrences: the expenses already added stay as they are.
+   */
+  saveRecurring(r: Recurring): void {
+    const i = this.recurring.findIndex((x) => x.id === r.id);
+    if (i < 0) this.recurring.push(r);
+    // What has been added meanwhile (e.g. by a refresh while the editor was open) still counts.
+    else this.recurring[i] = { ...r, done: this.recurring[i].done };
+    this.addDue();
+    this.enqueue(this.recurringOp());
+  }
+
+  /** Stops a recurring expense. The expenses it already added are kept. */
+  deleteRecurring(id: string): void {
+    this.recurring = this.recurring.filter((r) => r.id !== id);
+    this.enqueue(this.recurringOp());
+  }
+
   /** Everything the store holds, e.g. to export it. */
   get data(): Data {
-    return { expenses: this.expenses, categories: this.categories, budgets: this.budgets, settings: this.settings };
+    return { expenses: this.expenses, categories: this.categories, budgets: this.budgets, settings: this.settings, recurring: this.recurring };
   }
 
   /** Adds what comes from a backup (see newInBackup: only what isn't here yet). */
@@ -419,6 +490,11 @@ class Store {
     if (Object.keys(d.settings).length) {
       this.settings = { ...this.settings, ...d.settings };
       this.queue.push({ t: 'settings', rows: settingsToRows(this.settings) });
+    }
+    if (d.recurring.length) {
+      this.recurring = [...this.recurring, ...d.recurring];
+      this.addDue();
+      this.queue.push(this.recurringOp());
     }
     this.changed();
     void this.flush();

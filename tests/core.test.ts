@@ -13,6 +13,7 @@ import {
   rowsToBudgets,
   rowsToCategories,
   rowsToExpenses,
+  rowsToRecurring,
   type Category,
   type Expense,
 } from '../src/schema';
@@ -27,6 +28,7 @@ const expense = (e: Partial<Expense>): Expense => ({
   type: 'expense',
   group: '',
   tags: [],
+  recurring: '',
   ...e,
 });
 
@@ -92,9 +94,9 @@ describe('schema', () => {
     const expenses = rowsToExpenses(rows);
     expect(expenses).toEqual([
       // "Spesa" is already the main category, so it is not repeated among the tags.
-      { id: 'a', date: '2026-09-01', amount: 12.5, currency: 'USD', category: 'Spesa', note: 'Lidl', type: 'expense', group: 'g1', tags: ['Casa'] },
-      { id: 'c', date: '2026-09-22', amount: 7, currency: mainCurrency, category: 'Svago', note: '', type: 'income', group: '', tags: [] },
-      { id: 'd', date: '2026-09-02', amount: 1, currency: mainCurrency, category: '', note: '', type: 'expense', group: '', tags: [] },
+      { id: 'a', date: '2026-09-01', amount: 12.5, currency: 'USD', category: 'Spesa', note: 'Lidl', type: 'expense', group: 'g1', tags: ['Casa'], recurring: '' },
+      { id: 'c', date: '2026-09-22', amount: 7, currency: mainCurrency, category: 'Svago', note: '', type: 'income', group: '', tags: [], recurring: '' },
+      { id: 'd', date: '2026-09-02', amount: 1, currency: mainCurrency, category: '', note: '', type: 'expense', group: '', tags: [], recurring: '' },
     ]);
   });
 
@@ -134,6 +136,8 @@ describe('withIds', () => {
       ],
       budgets: [{ month: '2026-01', category: 'Barca', amount: 50, currency: 'EUR' }],
       settings: {},
+      // Typed in the spreadsheet: no ID, category by name.
+      recurring: rowsToRecurring([['Rata barca', 120, 'EUR', 'Barca', 'Spesa', '', '2026-01-15', 1, 'month', 24, 0, '']]),
     });
     const [groceries, boat, eatingOut] = m.data.categories;
     expect(groceries).toMatchObject({ id: 'groceries', names: { en: 'Groceries', de: 'Lebensmittel' } });
@@ -146,12 +150,27 @@ describe('withIds', () => {
       ['Sconosciuta', []],
     ]);
     expect(m.data.budgets[0].category).toBe('barca');
-    expect(m).toMatchObject({ categories: true, budgets: true, relabel: { Spesa: 'groceries', Groceries: 'groceries', Barca: 'barca' } });
+    expect(m.data.recurring[0]).toMatchObject({ category: 'barca', tags: ['groceries'] });
+    expect(m.data.recurring[0].id).toBeTruthy();
+    expect(m).toMatchObject({
+      categories: true,
+      budgets: true,
+      recurring: true,
+      relabel: { Spesa: 'groceries', Groceries: 'groceries', Barca: 'barca' },
+    });
   });
 
   it('changes nothing once everything has IDs', () => {
-    const data = withIds({ categories: defaultCategories('it'), expenses: [expense({ id: '1', date: '2026-09-01', amount: 3, category: 'groceries', note: '' })], budgets: [], settings: {} });
-    expect(data).toMatchObject({ categories: false, budgets: false, relabel: {} });
+    const recurring = rowsToRecurring([['Mutuo', 650, 'EUR', 'home', '', '', '2026-01-15', 1, 'month', 240, 9, 'm1']]);
+    const data = withIds({
+      categories: defaultCategories('it'),
+      expenses: [expense({ id: '1', date: '2026-09-01', amount: 3, category: 'groceries', note: '' })],
+      budgets: [],
+      settings: {},
+      recurring,
+    });
+    expect(data).toMatchObject({ categories: false, budgets: false, recurring: false, relabel: {} });
+    expect(data.data.recurring[0]).toBe(recurring[0]);
   });
 
   it('makes unique IDs for new categories', () => {

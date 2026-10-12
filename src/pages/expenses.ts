@@ -1,19 +1,36 @@
 import { isSpending } from '../budget';
 import { normalize } from '../categorize';
 import { formatDate, money } from '../format';
-import { html } from '../html';
+import { html, type SafeHtml } from '../html';
 import { countLabel, t } from '../i18n';
 import { icon } from '../icons';
 import { onRatesChange, toMain } from '../rates';
-import { allCategories, sortByDateDesc, type Expense } from '../schema';
+import { nextDate, recurringSummary } from '../recurring';
+import { allCategories, sortByDateDesc, type Expense, type Recurring } from '../schema';
 import { store } from '../store';
-import { $, categoryLabel, dayLabel, expenseRow } from '../ui';
+import { $, categoryBadge, categoryLabel, dayLabel, expenseRow } from '../ui';
 
 /** Rows rendered per step; more load while scrolling, so long histories stay fast. */
 const STEP = 150;
 
 // Kept while moving between pages in the same session.
 let query = '';
+let recurringOpen = false;
+
+/** One recurring expense: tapping it opens its editor. */
+function recurringRow(r: Recurring): SafeHtml {
+  const income = r.type === 'income';
+  return html`<li>
+    <a class="row" href="#/recurring/${encodeURIComponent(r.id)}">
+      ${categoryBadge(r.category)}
+      <span class="row-main">
+        <span class="row-title">${r.note || categoryLabel(r.category)}</span>
+        <span class="row-meta">${recurringSummary(r)}</span>
+      </span>
+      <span class="row-amount ${income ? 'income' : ''}">${income ? '+ ' : ''}${money(r.amount, r.currency)}</span>
+    </a>
+  </li>`;
+}
 
 const valueOf = (e: Expense) => toMain(e.amount, e.currency, e.date) ?? 0;
 
@@ -49,16 +66,35 @@ export function mountExpenses(view: HTMLElement): () => void {
       ${icon('search')}
       <input type="search" name="q" placeholder="${t('searchExpenses')}" value="${query}" autocomplete="off" enterkeyhint="search" />
     </label>
+    <div id="recurring-list"></div>
     <div id="expense-list" class="expense-months"></div>
   `.value;
 
   const input = $<HTMLInputElement>('[name=q]', view);
+  const recurringList = $('#recurring-list', view);
   const list = $('#expense-list', view);
   const count = $('#expense-count', view);
+
+  /** The recurring expenses (those matching the search), next due first and the completed ones last. */
+  function renderRecurring(q: string): void {
+    const found = store.recurring
+      .filter((r) => !q || normalize(`${r.note} ${allCategories(r).map(categoryLabel).join(' ')}`).includes(q))
+      .map((r) => ({ r, next: nextDate(r) ?? '~' }))
+      .sort((a, b) => a.next.localeCompare(b.next));
+    recurringList.innerHTML = found.length
+      ? html`<details class="card recurring-card" ${recurringOpen || q ? html`open` : ''}>
+          <summary class="recurring-head">
+            ${icon('repeat')}<h2>${t('recurringTitle')}</h2><span class="muted">${found.length}</span>${icon('chevronDown', 'chevron-toggle')}
+          </summary>
+          <ul class="list">${found.map(({ r }) => recurringRow(r))}</ul>
+        </details>`.value
+      : '';
+  }
 
   function render(): void {
     observer?.disconnect();
     const q = normalize(query);
+    renderRecurring(q);
     const all = sortByDateDesc(store.expenses, store.expenses);
     const matches = q ? all.filter((e) => normalize(`${e.note} ${allCategories(e).map(categoryLabel).join(' ') || categoryLabel('')}`).includes(q)) : all;
     count.textContent = countLabel(matches.length);
@@ -121,6 +157,14 @@ export function mountExpenses(view: HTMLElement): () => void {
   list.addEventListener('click', (e) => {
     if ((e.target as Element).closest('[data-action=more]')) showMore();
   });
+  // Open or closed, it stays that way while moving between pages (but a search opens it).
+  recurringList.addEventListener(
+    'toggle',
+    (e) => {
+      if (!query) recurringOpen = (e.target as HTMLDetailsElement).open;
+    },
+    true,
+  );
 
   render();
   const offStore = store.on((topic) => topic === 'data' && render());

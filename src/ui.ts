@@ -91,7 +91,9 @@ function expenseSummary(e: Expense, opts: { showDate: boolean }): SafeHtml {
   const income = e.type === 'income';
   return html`${categoryBadge(e.category)}
     <span class="row-main">
-      <span class="row-title">${expenseTitle(e)}${e.group ? html`<span class="split-badge" title="${t('splitPartOf')}">${icon('split')}</span>` : ''}</span>
+      <span class="row-title">${expenseTitle(e)}${e.group ? html`<span class="split-badge" title="${t('splitPartOf')}">${icon('split')}</span>` : ''}${e.recurring && store.recurringById(e.recurring)
+          ? html`<span class="split-badge" title="${t('recurringEntry')}">${icon('repeat')}</span>`
+          : ''}</span>
       ${meta ? html`<span class="row-meta">${meta}</span>` : ''}
     </span>
     <span class="row-amount ${income ? 'income' : ''}">${income ? '+ ' : ''}${money(e.amount, e.currency)}${converted !== null ? html`<small>≈ ${money(converted)}</small>` : ''}</span>`;
@@ -110,12 +112,14 @@ export function openExpenseActions(id: string): void {
   const e = store.expenses.find((x) => x.id === id);
   if (!e) return;
   const parts = store.splitParts(e);
+  const recurring = e.recurring ? store.recurringById(e.recurring) : undefined;
   let armed = false;
   const dialog = openSheet(html`
     <div class="sheet-body expense-actions">
       <div class="row static">${expenseSummary(e, { showDate: true })}</div>
       <div class="sheet-actions">
         <button type="button" class="btn block" data-action="edit">${icon('pencil')}${t('edit')}</button>
+        ${recurring ? html`<button type="button" class="btn block" data-action="recurring">${icon('repeat')}${t('editRecurring')}</button>` : ''}
         <button type="button" class="btn block danger-text" data-action="delete">
           ${icon('trash')}<span>${parts.length > 1 ? t('deleteAllParts', { n: parts.length }) : t('delete')}</span>
         </button>
@@ -133,6 +137,10 @@ export function openExpenseActions(id: string): void {
     if (action === 'edit') {
       dialog.close();
       location.hash = `#/edit/${encodeURIComponent(id)}`;
+    }
+    if (action === 'recurring' && recurring) {
+      dialog.close();
+      location.hash = `#/recurring/${encodeURIComponent(recurring.id)}`;
     }
     if ((action === 'delete' || action === 'delete-one') && button) {
       if (!armed) {

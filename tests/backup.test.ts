@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fromBackup, isEmpty, newInBackup, toBackup } from '../src/backup';
-import type { Category, Data, Expense } from '../src/schema';
+import type { Category, Data, Expense, Recurring } from '../src/schema';
 
 const exp = (id: string, extra: Partial<Expense> = {}): Expense => ({
   id,
@@ -12,6 +12,7 @@ const exp = (id: string, extra: Partial<Expense> = {}): Expense => ({
   type: 'expense',
   group: '',
   tags: [],
+  recurring: '',
   ...extra,
 });
 
@@ -25,8 +26,28 @@ const cat = (id: string, name: string, extra: Partial<Category> = {}): Category 
   ...extra,
 });
 
+const mortgage = (id: string): Recurring => ({
+  id,
+  note: 'Mortgage',
+  amount: 650,
+  currency: 'EUR',
+  category: 'home',
+  tags: [],
+  type: 'expense',
+  start: '2026-09-10',
+  every: 1,
+  unit: 'month',
+  count: 240,
+  done: 0,
+});
+
 const data: Data = {
-  expenses: [exp('a'), exp('b', { type: 'income', category: 'salary', amount: 2000, note: '' }), exp('c', { group: 'g1', tags: ['trip'] })],
+  expenses: [
+    exp('a'),
+    exp('b', { type: 'income', category: 'salary', amount: 2000, note: '' }),
+    exp('c', { group: 'g1', tags: ['trip'] }),
+    exp('m-1', { note: 'Mortgage', amount: 650, category: 'home', recurring: 'm' }),
+  ],
   categories: [
     cat('food', 'Food', { names: { en: 'Food', it: 'Cibo' }, icon: '🍕', color: '#f00', keywords: ['pizza', 'sushi'] }),
     cat('salary', 'Salary', { icon: '💼' }),
@@ -37,9 +58,13 @@ const data: Data = {
     { month: '2026-03', category: 'food', amount: 300, currency: 'EUR' },
   ],
   settings: { someKey: 'x' },
+  recurring: [
+    { ...mortgage('m'), done: 1 },
+    { ...mortgage('n'), note: 'Netflix', amount: 12.99, every: 1, unit: 'month', count: 0, tags: ['trip'], type: 'income' },
+  ],
 };
 
-const empty: Data = { expenses: [], categories: [], budgets: [], settings: {} };
+const empty: Data = { expenses: [], categories: [], budgets: [], settings: {}, recurring: [] };
 
 describe('backup', () => {
   it('round-trips everything', () => {
@@ -63,8 +88,9 @@ describe('backup', () => {
     });
     const d = fromBackup(v1)!;
     expect(d.categories.map((c) => c.id)).toEqual(['groceries', 'barca']);
-    expect(d.expenses[0]).toMatchObject({ category: 'groceries', tags: ['barca'] });
+    expect(d.expenses[0]).toMatchObject({ category: 'groceries', tags: ['barca'], recurring: '' });
     expect(d.budgets[0].category).toBe('barca');
+    expect(d.recurring).toEqual([]);
   });
 
   it('adds everything to an empty account', () => {
@@ -77,12 +103,14 @@ describe('backup', () => {
       categories: [cat('food', 'Cibo')],
       budgets: [{ month: '2026-01', category: '', amount: 500, currency: 'EUR' }],
       settings: { someKey: 'y' },
+      recurring: [{ ...mortgage('m'), amount: 700 }],
     };
     const add = newInBackup(current, data);
-    expect(add.expenses.map((e) => e.id)).toEqual(['b', 'c']);
+    expect(add.expenses.map((e) => e.id)).toEqual(['b', 'c', 'm-1']);
     expect(add.categories.map((c) => c.id)).toEqual(['salary', 'trip']);
     expect(add.budgets).toEqual([data.budgets[1]]);
     expect(add.settings).toEqual({});
+    expect(add.recurring.map((r) => r.id)).toEqual(['n']);
     expect(isEmpty(newInBackup(data, data))).toBe(true);
   });
 });

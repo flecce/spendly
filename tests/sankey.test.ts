@@ -5,7 +5,7 @@ import type { Expense } from '../src/schema';
 
 let n = 0;
 const entry = (amount: number, category: string, type: Expense['type'] = 'expense'): [Expense, number] => [
-  { id: String(n++), date: '2026-09-10', amount, currency: mainCurrency, category, note: '', type, group: '', tags: [] },
+  { id: String(n++), date: '2026-09-10', amount, currency: mainCurrency, category, note: '', type, group: '', tags: [], recurring: '' },
   amount,
 ];
 

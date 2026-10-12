@@ -2,11 +2,12 @@ import { isCurrency, mainCurrency, parseAmount, toIsoDate } from './format';
 import { lang, LANGS, type Lang } from './i18n';
 
 /**
- * The spreadsheet is the database. Two sheets, first row is the header:
- *   Expenses:   Date | Amount | Currency | Category | Note | ID | Type | Group | Tags
+ * The spreadsheet is the database. One sheet per kind of data, first row is the header:
+ *   Expenses:   Date | Amount | Currency | Category | Note | ID | Type | Group | Tags | Recurring
  *   Categories: Name  | Icon     | Color    | Keywords (comma separated) | ID | Names
  *   Budgets:    Month | Category | Amount   | Currency
  *   Settings:   Key   | Value
+ *   Recurring:  Note  | Amount   | Currency | Category | Tags | Type | Start | Every | Unit | Count | Done | ID
  * Expenses, tags and budgets reference categories by ID, a readable slug ("groceries") that
  * never changes, so a category can be renamed or shown in another language without touching
  * them. Names holds the category's name per language ("en: Groceries; it: Spesa"); Name is
@@ -18,18 +19,23 @@ import { lang, LANGS, type Lang } from './i18n';
  * an expense belongs to: they are searchable, while the amount counts in Category alone.
  * A Budgets row applies from its month on (blank category = the overall budget), so
  * changing the budget never rewrites the past.
+ * A Recurring row is an expense that repeats (a mortgage instalment, a subscription): each
+ * occurrence becomes a normal Expenses row when its day comes, and its Recurring column points
+ * back to it. Done counts the occurrences added so far; Count is the total (blank = until the
+ * recurrence is deleted). Deleting a recurrence leaves the expenses it added where they are.
  */
-export type SheetName = 'Expenses' | 'Categories' | 'Budgets' | 'Settings';
+export type SheetName = 'Expenses' | 'Categories' | 'Budgets' | 'Settings' | 'Recurring';
 export type Cell = string | number;
 export type Row = Cell[];
 
 // Type and Group were added after ID so that files created earlier keep working as they are.
-export const EXPENSE_HEADER: Row = ['Date', 'Amount', 'Currency', 'Category', 'Note', 'ID', 'Type', 'Group', 'Tags'];
+export const EXPENSE_HEADER: Row = ['Date', 'Amount', 'Currency', 'Category', 'Note', 'ID', 'Type', 'Group', 'Tags', 'Recurring'];
 /** Column positions in the Expenses sheet. */
-export const COL = { date: 0, amount: 1, currency: 2, category: 3, note: 4, id: 5, type: 6, group: 7, tags: 8 } as const;
+export const COL = { date: 0, amount: 1, currency: 2, category: 3, note: 4, id: 5, type: 6, group: 7, tags: 8, recurring: 9 } as const;
 export const CATEGORY_HEADER: Row = ['Name', 'Icon', 'Color', 'Keywords', 'ID', 'Names'];
 export const BUDGET_HEADER: Row = ['Month', 'Category', 'Amount', 'Currency'];
 export const SETTINGS_HEADER: Row = ['Key', 'Value'];
+export const RECURRING_HEADER: Row = ['Note', 'Amount', 'Currency', 'Category', 'Tags', 'Type', 'Start', 'Every', 'Unit', 'Count', 'Done', 'ID'];
 
 export type ExpenseType = 'expense' | 'income';
 
@@ -45,6 +51,31 @@ export interface Expense {
   group: string;
   /** IDs of further categories this expense belongs to; the amount still counts in `category`. */
   tags: string[];
+  /** ID of the recurring expense that added it ('' when entered by hand). */
+  recurring: string;
+}
+
+export type RepeatUnit = 'day' | 'week' | 'month' | 'year';
+const REPEAT_UNITS: RepeatUnit[] = ['day', 'week', 'month', 'year'];
+
+/** An expense that repeats: its occurrences are added as they fall due (see recurring.ts). */
+export interface Recurring {
+  id: string;
+  note: string;
+  amount: number;
+  currency: string;
+  category: string;
+  tags: string[];
+  type: ExpenseType;
+  /** Day of the first occurrence; the next ones keep its day of the month (or of the week). */
+  start: string; // YYYY-MM-DD
+  /** Repeats every `every` units (every 2 months, every week…). */
+  every: number;
+  unit: RepeatUnit;
+  /** Occurrences in all; 0 = until the recurrence is deleted. */
+  count: number;
+  /** Occurrences added so far. */
+  done: number;
 }
 
 export interface Category {
@@ -71,6 +102,7 @@ export interface Data {
   categories: Category[];
   budgets: BudgetEntry[];
   settings: Settings;
+  recurring: Recurring[];
 }
 
 export interface Budget {
@@ -98,6 +130,7 @@ export const expenseToRow = (e: Expense): Row => [
   e.type === 'income' ? 'income' : '',
   e.group,
   e.tags.join(', '),
+  e.recurring,
 ];
 
 function hash(s: string): string {
@@ -141,13 +174,14 @@ export function rowsToExpenses(rows: unknown[][]): Expense[] {
       type: text(row[COL.type]).toLowerCase() === 'income' ? 'income' : 'expense',
       group: text(row[COL.group]),
       tags: splitKeywords(text(row[COL.tags])).filter((tag) => tag !== text(row[COL.category])),
+      recurring: text(row[COL.recurring]),
     });
   });
   return out;
 }
 
 /** Every category an expense touches: the one that counts first, then its tags. */
-export const allCategories = (e: Expense): string[] => [e.category, ...e.tags].filter(Boolean);
+export const allCategories = (e: Pick<Expense, 'category' | 'tags'>): string[] => [e.category, ...e.tags].filter(Boolean);
 
 export const splitKeywords = (s: string): string[] =>
   s.split(/[,;\n]/).map((k) => k.trim()).filter(Boolean);
@@ -220,6 +254,59 @@ export function rowsToSettings(rows: unknown[][]): Settings {
 }
 
 export const settingsToRows = (s: Settings): Row[] => Object.entries(s).map(([k, v]) => [k, v]);
+
+export const recurringToRow = (r: Recurring): Row => [
+  r.note,
+  r.amount,
+  r.currency,
+  r.category,
+  r.tags.join(', '),
+  r.type === 'income' ? 'income' : '',
+  r.start,
+  r.every,
+  r.unit,
+  r.count || '',
+  r.done,
+  r.id,
+];
+
+/** A whole number of at least `min` (a blank cell counts as `min`); null when it isn't one. */
+function wholeNumber(v: unknown, min: number): number | null {
+  const n = typeof v === 'number' ? v : text(v) ? Number(text(v)) : min;
+  return Number.isInteger(n) && n >= min ? n : null;
+}
+
+/** Recurring expenses as in the sheet; ID is '' on rows typed by hand (the store gives them one). */
+export function rowsToRecurring(rows: unknown[][]): Recurring[] {
+  const out: Recurring[] = [];
+  for (const row of rows) {
+    const start = toIsoDate(row[6]);
+    const raw = row[1];
+    const amount = typeof raw === 'number' ? raw : parseAmount(text(raw));
+    const every = wholeNumber(row[7], 1);
+    const count = wholeNumber(row[9], 0);
+    const done = wholeNumber(row[10], 0);
+    if (!start || amount === null || every === null || count === null || done === null) continue;
+    const unit = text(row[8]).toLowerCase().replace(/s$/, '') as RepeatUnit;
+    const code = text(row[2]).toUpperCase();
+    const category = text(row[3]);
+    out.push({
+      id: text(row[11]),
+      note: text(row[0]),
+      amount,
+      currency: isCurrency(code) ? code : mainCurrency,
+      category,
+      tags: splitKeywords(text(row[4])).filter((tag) => tag !== category),
+      type: text(row[5]).toLowerCase() === 'income' ? 'income' : 'expense',
+      start,
+      every,
+      unit: REPEAT_UNITS.includes(unit) ? unit : 'month',
+      count,
+      done,
+    });
+  }
+  return out;
+}
 
 /** Newest first; within the same day, the last one entered first. */
 export function sortByDateDesc(list: Expense[], order: Expense[]): Expense[] {

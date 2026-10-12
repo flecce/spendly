@@ -1,6 +1,6 @@
 import { normalize } from './categorize';
 import { LANGS, type Lang } from './i18n';
-import type { Category, Data } from './schema';
+import { newId, type Category, type Data } from './schema';
 import { isDark } from './theme';
 
 /** Categorical palette (light value → dark-surface step of the same hue). */
@@ -264,15 +264,18 @@ export interface Migration {
   /** Some categories got an ID (or names): the Categories sheet needs writing. */
   categories: boolean;
   budgets: boolean;
+  /** Some recurring expenses got an ID or a category ID: the Recurring sheet needs writing. */
+  recurring: boolean;
   /** Category values in the Expenses sheet to replace (name as written → ID). */
   relabel: Record<string, string>;
 }
 
 /**
- * Gives every category an ID and makes expenses, tags and budgets point to IDs. Files written
- * by an older version (and categories typed by name in the spreadsheet) reference categories
- * by name: any of their names, in any language, leads to the ID. Values that match no category
- * are kept as they are.
+ * Gives every category an ID and makes expenses, tags, budgets and recurring expenses point
+ * to IDs. Files written by an older version (and categories typed by name in the spreadsheet)
+ * reference categories by name: any of their names, in any language, leads to the ID. Values
+ * that match no category are kept as they are. Recurring expenses typed in the spreadsheet
+ * without an ID get one.
  */
 export function withIds(d: Data): Migration {
   let categoriesChanged = false;
@@ -316,7 +319,21 @@ export function withIds(d: Data): Migration {
     budgetsChanged = true;
     return { ...b, category };
   });
-  return { data: { ...d, categories, expenses, budgets }, categories: categoriesChanged, budgets: budgetsChanged, relabel };
+  let recurringChanged = false;
+  const recurring = d.recurring.map((r) => {
+    const category = resolve(r.category);
+    const tags = [...new Set(r.tags.map(resolve))].filter((tag) => tag && tag !== category);
+    if (r.id && category === r.category && tags.join('\n') === r.tags.join('\n')) return r;
+    recurringChanged = true;
+    return { ...r, id: r.id || newId(), category, tags };
+  });
+  return {
+    data: { ...d, categories, expenses, budgets, recurring },
+    categories: categoriesChanged,
+    budgets: budgetsChanged,
+    recurring: recurringChanged,
+    relabel,
+  };
 }
 
 export const EMOJIS = ['🛒', '🍽️', '☕', '🍕', '🚗', '⛽', '🚆', '🏠', '💡', '📱', '💊', '🏋️', '🛍️', '👕', '🎁', '🎬', '🎮', '🎵', '✈️', '🏖️', '🐶', '👶', '🎓', '💼', '💸', '🧾', '🔧', '📦'];

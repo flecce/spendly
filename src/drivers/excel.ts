@@ -4,6 +4,7 @@ import {
   CATEGORY_HEADER,
   COL,
   EXPENSE_HEADER,
+  RECURRING_HEADER,
   rowIds,
   SETTINGS_HEADER,
   type Cell,
@@ -16,10 +17,11 @@ import { buildXlsx, Style } from './xlsx';
 
 const DRIVE = 'https://graph.microsoft.com/v1.0/me/drive';
 const FILE = 'Spendly.xlsx';
-const EXPENSE_FORMATS = ['yyyy-mm-dd', '#,##0.00', '@', '@', '@', '@', '@', '@', '@'];
+const EXPENSE_FORMATS = ['yyyy-mm-dd', '#,##0.00', '@', '@', '@', '@', '@', '@', '@', '@'];
 const CATEGORY_FORMATS = ['@', '@', '@', '@', '@', '@'];
 const BUDGET_FORMATS = ['@', '@', '#,##0.00', '@'];
 const SETTINGS_FORMATS = ['@', 'General'];
+const RECURRING_FORMATS = ['@', '#,##0.00', '@', '@', '@', '@', '@', 'General', '@', 'General', 'General', '@'];
 
 interface DriveItem {
   id: string;
@@ -56,7 +58,7 @@ export class ExcelDriver implements Driver {
   /** Files written by an older version have fewer columns: bring the header rows up to date. */
   private async repairHeader(): Promise<void> {
     const sheets = [
-      ['Expenses', 'A1:I1', EXPENSE_HEADER],
+      ['Expenses', 'A1:J1', EXPENSE_HEADER],
       ['Categories', 'A1:F1', CATEGORY_HEADER],
     ] as const;
     for (const [sheet, address, header] of sheets) {
@@ -99,6 +101,7 @@ export class ExcelDriver implements Driver {
           { width: 9, style: Style.Text },
           { width: 14, style: Style.Text },
           { width: 24, style: Style.Text },
+          { width: 14, style: Style.Text },
         ],
       },
       {
@@ -128,6 +131,24 @@ export class ExcelDriver implements Driver {
         rows: [SETTINGS_HEADER],
         columns: [
           { width: 18, style: Style.Text },
+          { width: 14, style: Style.Text },
+        ],
+      },
+      {
+        name: 'Recurring',
+        rows: [RECURRING_HEADER],
+        columns: [
+          { width: 32, style: Style.Text },
+          { width: 12, style: Style.Amount },
+          { width: 9, style: Style.Text },
+          { width: 22, style: Style.Text },
+          { width: 24, style: Style.Text },
+          { width: 9, style: Style.Text },
+          { width: 12, style: Style.Text },
+          { width: 7, style: Style.General },
+          { width: 8, style: Style.Text },
+          { width: 7, style: Style.General },
+          { width: 7, style: Style.General },
           { width: 14, style: Style.Text },
         ],
       },
@@ -178,13 +199,14 @@ export class ExcelDriver implements Driver {
   }
 
   async read() {
-    const [expenses, categories, budgets, settings] = await Promise.all([
+    const [expenses, categories, budgets, settings, recurring] = await Promise.all([
       this.dataRows('Expenses'),
       this.dataRows('Categories'),
       this.optionalRows('Budgets'),
       this.optionalRows('Settings'),
+      this.optionalRows('Recurring'),
     ]);
-    return { expenses, categories, budgets: budgets ?? [], settings: settings ?? [] };
+    return { expenses, categories, budgets: budgets ?? [], settings: settings ?? [], recurring: recurring ?? [] };
   }
 
   private write(sheet: SheetName, address: string, rows: Cell[][], formats: string[]) {
@@ -198,7 +220,7 @@ export class ExcelDriver implements Driver {
   private writeExpenses(r: number, rows: Row[]) {
     // Dates go in as serial numbers so Excel stores real dates regardless of locale.
     const cells = rows.map((row) => row.map((v, i) => (i === COL.date ? isoToSerial(String(v)) : i === COL.amount ? v : String(v))));
-    return this.write('Expenses', `A${r}:I${r + rows.length - 1}`, cells, EXPENSE_FORMATS);
+    return this.write('Expenses', `A${r}:J${r + rows.length - 1}`, cells, EXPENSE_FORMATS);
   }
 
   private writeExpense(r: number, row: Row) {
@@ -268,6 +290,15 @@ export class ExcelDriver implements Driver {
       before = [];
     }
     await this.replaceRows('Settings', 'B', before, rows, SETTINGS_FORMATS);
+  }
+
+  async writeRecurring(rows: Row[]): Promise<void> {
+    let before = await this.optionalRows('Recurring');
+    if (!before) {
+      await this.addSheet('Recurring', RECURRING_HEADER);
+      before = [];
+    }
+    await this.replaceRows('Recurring', 'L', before, rows, RECURRING_FORMATS);
   }
 
   async writeExpenseCategories(values: string[]): Promise<void> {

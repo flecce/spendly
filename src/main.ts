@@ -145,17 +145,20 @@ function renderSync(): void {
   banner.innerHTML = bannerHtml.value;
 }
 
-// ---- Routing: #/add, #/dashboard, #/categories, #/edit/<id> ----
+// ---- Routing: #/add, #/dashboard, #/categories, #/edit/<id>, #/recurring/<id> ----
+
+/** The tab a page belongs to. */
+const TAB_OF: Record<string, string> = { edit: 'add', recurring: 'expenses' };
 
 function route(): void {
   unmount?.();
   unmount = null;
   const [, name = 'add', arg = ''] = /^#\/?([^/]*)\/?(.*)$/.exec(location.hash) ?? [];
-  const page = ['expenses', 'dashboard', 'categories', 'edit'].includes(name) ? name : 'add';
+  const page = ['expenses', 'dashboard', 'categories', 'edit', 'recurring'].includes(name) ? name : 'add';
   const view = $('#view');
   view.className = `view page-${page}`;
   document.querySelectorAll<HTMLElement>('[data-route]').forEach((a) => {
-    if (a.dataset.route === (page === 'edit' ? 'add' : page)) a.setAttribute('aria-current', 'page');
+    if (a.dataset.route === (TAB_OF[page] ?? page)) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   });
 
@@ -175,7 +178,8 @@ function route(): void {
   if (page === 'expenses') unmount = mountExpenses(view);
   else if (page === 'dashboard') unmount = mountDashboard(view);
   else if (page === 'categories') unmount = mountCategories(view);
-  else unmount = mountAdd(view, page === 'edit' ? decodeURIComponent(arg) : undefined);
+  else if (page === 'recurring') unmount = mountAdd(view, { recurring: decodeURIComponent(arg) });
+  else unmount = mountAdd(view, page === 'edit' ? { expense: decodeURIComponent(arg) } : {});
 }
 
 // ---- Startup ----

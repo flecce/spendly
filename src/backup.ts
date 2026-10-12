@@ -4,9 +4,11 @@ import {
   budgetToRow,
   categoryToRow,
   expenseToRow,
+  recurringToRow,
   rowsToBudgets,
   rowsToCategories,
   rowsToExpenses,
+  rowsToRecurring,
   rowsToSettings,
   settingsToRows,
   type BudgetEntry,
@@ -30,6 +32,8 @@ interface BackupFile {
   categories: Row[];
   budgets: Row[];
   settings: Row[];
+  /** Missing in files exported before recurring expenses existed. */
+  recurring?: Row[];
 }
 
 export function toBackup(d: Data): string {
@@ -41,6 +45,7 @@ export function toBackup(d: Data): string {
     categories: d.categories.map(categoryToRow),
     budgets: d.budgets.map(budgetToRow),
     settings: settingsToRows(d.settings),
+    recurring: d.recurring.map(recurringToRow),
   };
   return JSON.stringify(file);
 }
@@ -61,17 +66,19 @@ export function fromBackup(text: string): Data | null {
     categories: rowsToCategories(rows(file.categories)),
     budgets: rowsToBudgets(rows(file.budgets)),
     settings: rowsToSettings(rows(file.settings)),
+    recurring: rowsToRecurring(rows(file.recurring)),
   }).data;
 }
 
 /**
- * What a backup adds to the current data: expenses, categories (by ID), budget entries and
- * settings that aren't there yet. Nothing already present is overwritten, so importing
- * the same file twice changes nothing.
+ * What a backup adds to the current data: expenses, categories and recurring expenses (by ID),
+ * budget entries and settings that aren't there yet. Nothing already present is overwritten,
+ * so importing the same file twice changes nothing.
  */
 export function newInBackup(current: Data, backup: Data): Data {
   const ids = new Set(current.expenses.map((e) => e.id));
   const categoryIds = new Set(current.categories.map((c) => c.id));
+  const recurringIds = new Set(current.recurring.map((r) => r.id));
   const budgetKey = (b: BudgetEntry) => `${b.month}|${b.category}`;
   const budgets = new Set(current.budgets.map(budgetKey));
   return {
@@ -79,11 +86,12 @@ export function newInBackup(current: Data, backup: Data): Data {
     categories: backup.categories.filter((c) => !categoryIds.has(c.id)),
     budgets: backup.budgets.filter((b) => !budgets.has(budgetKey(b))),
     settings: Object.fromEntries(Object.entries(backup.settings).filter(([k]) => !(k in current.settings))),
+    recurring: backup.recurring.filter((r) => !recurringIds.has(r.id)),
   };
 }
 
 export const isEmpty = (d: Data): boolean =>
-  !d.expenses.length && !d.categories.length && !d.budgets.length && !Object.keys(d.settings).length;
+  !d.expenses.length && !d.categories.length && !d.budgets.length && !Object.keys(d.settings).length && !d.recurring.length;
 
 /** Saves the data as a file in the browser's downloads. */
 export function download(d: Data): void {

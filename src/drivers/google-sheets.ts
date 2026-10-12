@@ -1,8 +1,8 @@
-import { BUDGET_HEADER, CATEGORY_HEADER, EXPENSE_HEADER, rowIds, SETTINGS_HEADER, type Cell, type Row, type SheetName } from '../schema';
+import { BUDGET_HEADER, CATEGORY_HEADER, EXPENSE_HEADER, RECURRING_HEADER, rowIds, SETTINGS_HEADER, type Cell, type Row, type SheetName } from '../schema';
 import { api, isNotFound, type TokenGetter } from './http';
 import type { Driver } from './types';
 
-const EXPENSES = 'Expenses!A2:I';
+const EXPENSES = 'Expenses!A2:J';
 const SHEETS = 'https://sheets.googleapis.com/v4/spreadsheets';
 const DRIVE = 'https://www.googleapis.com/drive/v3/files';
 const TITLE = 'Spendly';
@@ -82,6 +82,7 @@ export class GoogleSheetsDriver implements Driver {
           sheet('Categories', [CATEGORY_HEADER, ...seedCategories]),
           sheet('Budgets', [BUDGET_HEADER]),
           sheet('Settings', [SETTINGS_HEADER]),
+          sheet('Recurring', [RECURRING_HEADER]),
         ],
       }),
     });
@@ -105,6 +106,7 @@ export class GoogleSheetsDriver implements Driver {
       ['Categories', CATEGORY_HEADER],
       ['Budgets', BUDGET_HEADER],
       ['Settings', SETTINGS_HEADER],
+      ['Recurring', RECURRING_HEADER],
     ] as const;
     for (const [title, header] of sheets) {
       if (this.sheetIds.has(title)) continue;
@@ -120,7 +122,7 @@ export class GoogleSheetsDriver implements Driver {
 
   /** Files written by an older version have fewer columns: bring the header rows up to date. */
   private async repairHeader(): Promise<void> {
-    const ranges = ['Expenses!A1:I1', 'Categories!A1:F1'];
+    const ranges = ['Expenses!A1:J1', 'Categories!A1:F1'];
     const res = await this.call<{ valueRanges: ValueRange[] }>(
       `${SHEETS}/${this.id}/values:batchGet?${ranges.map((r) => `ranges=${encodeURIComponent(r)}`).join('&')}`,
     );
@@ -132,7 +134,7 @@ export class GoogleSheetsDriver implements Driver {
   }
 
   async read() {
-    const ranges = [EXPENSES, 'Categories!A2:F', 'Budgets!A2:D', 'Settings!A2:B']
+    const ranges = [EXPENSES, 'Categories!A2:F', 'Budgets!A2:D', 'Settings!A2:B', 'Recurring!A2:L']
       .map((r) => `ranges=${encodeURIComponent(r)}`)
       .join('&');
     const res = await this.call<{ valueRanges: ValueRange[] }>(
@@ -143,6 +145,7 @@ export class GoogleSheetsDriver implements Driver {
       categories: res.valueRanges[1].values ?? [],
       budgets: res.valueRanges[2].values ?? [],
       settings: res.valueRanges[3].values ?? [],
+      recurring: res.valueRanges[4].values ?? [],
     };
   }
 
@@ -168,7 +171,7 @@ export class GoogleSheetsDriver implements Driver {
   async appendExpenses(rows: Row[]): Promise<void> {
     if (!rows.length) return;
     // RAW keeps notes like "=1+1" or "1/2" as plain text.
-    await this.call(this.values('Expenses!A1:I1', ':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS'), {
+    await this.call(this.values('Expenses!A1:J1', ':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS'), {
       method: 'POST',
       body: JSON.stringify({ values: rows }),
     });
@@ -177,7 +180,7 @@ export class GoogleSheetsDriver implements Driver {
   async upsertExpense(id: string, row: Row): Promise<void> {
     const r = await this.rowOf(id);
     if (r < 0) return this.appendExpense(row);
-    await this.put(`Expenses!A${r}:I${r}`, [row]);
+    await this.put(`Expenses!A${r}:J${r}`, [row]);
   }
 
   async deleteExpense(id: string): Promise<void> {
@@ -205,6 +208,11 @@ export class GoogleSheetsDriver implements Driver {
   async writeSettings(rows: Row[]): Promise<void> {
     if (rows.length) await this.put(`Settings!A2:B${rows.length + 1}`, rows);
     await this.call(this.values(`Settings!A${rows.length + 2}:B`, ':clear'), { method: 'POST' });
+  }
+
+  async writeRecurring(rows: Row[]): Promise<void> {
+    if (rows.length) await this.put(`Recurring!A2:L${rows.length + 1}`, rows);
+    await this.call(this.values(`Recurring!A${rows.length + 2}:L`, ':clear'), { method: 'POST' });
   }
 
   async writeExpenseCategories(values: string[]): Promise<void> {
